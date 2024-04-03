@@ -2,6 +2,7 @@
     "model_name":"base",
     "model_type":"transformer",
     "model_config":{
+        "prv_frame":1,
         "batch_size":512,
         "epochs":1000,
         "lr":0.00002,
