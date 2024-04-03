@@ -254,3 +254,6 @@ def createPhonesData(path,sub,num,output_path):
             save_name = f'{phone_info["label"]}_{sub}_{num}_{count}.npy'
         np.save(os.path.join(output_path,phone_info["label"],save_name),phone_info)
     return maxlength,minlength
+
+def toMFCC(logMel):
+    return scipy.fftpack.dct(logMel,type=2,axis=1,norm='ortho')[:,:13]

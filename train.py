@@ -8,24 +8,32 @@ import torch.nn.functional as F
 from torch import nn
 
 from torch.utils.data import TensorDataset, DataLoader
-import tqdm
+# import tqdm
 from torch.utils.tensorboard import SummaryWriter
 
 import transformer
+import json
 
 
 feat_path = r'./feat'
-pts = ['sub-%02d'%i for i in range(1,11)]
+config_path = r'./config'
 
-batch_size = 512
-epochs = 1000
-print_interval = 5
-lr = 0.00002
-b1 = 0.5
-b2 = 0.999
-d_model = 256
-nhead = 4
-n_layer =6
+pts = ['sub-%02d'%i for i in range(1,11)]
+model_name = '4h6l'
+
+with open(os.path.join(config_path,f'{model_name}.json'),'r') as f:
+    cfg = json.load(f)['model_config']
+
+batch_size = cfg['batch_size']
+epochs = cfg['epochs']
+lr = cfg['lr']
+b1 = cfg['b1']
+b2 = cfg['b2']
+scaled_dim = cfg['scaled_dim']
+d_model = cfg['d_model']
+nhead = cfg['nhead']
+n_layer = cfg['n_layer']
+
 tensor_type = torch.cuda.FloatTensor
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
@@ -55,15 +63,11 @@ def splitData(total_data,total_label):
     train_data_mean = np.mean(train_data)
     train_data_std = np.std(train_data)
 
-    # train_label_mean = np.mean(train_label)
-    # train_label_std = np.std(train_label)
-
-
     train_data = (train_data-train_data_mean)/train_data_std
     test_data = (test_data-train_data_mean)/train_data_std
     return train_data,train_label,test_data,test_label
 
-for pt in pts:
+for pt in pts[5:6]:
     total_data,total_label = loadData(pt)
     train_data,train_label,test_data,test_label = splitData(total_data,total_label)
 
@@ -74,6 +78,7 @@ for pt in pts:
 
     model = transformer.Model(
         input_dim=input_dim,
+        scaled_dim = scaled_dim,
         output_dim=output_dim,
         d_model=d_model,
         nhead=nhead,
@@ -91,11 +96,11 @@ for pt in pts:
     # test_dataset = TensorDataset(test_data,test_label)
     train_dataloader = DataLoader(dataset=train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True)
 
-    writer = SummaryWriter(f'./logs/{pt}')
-    writer.add_graph(model,test_data)
-    pbar = tqdm.trange(epochs, desc=f"Epochs")
+    writer = SummaryWriter(f'./logs/{pt}/{model_name}')
+    # writer.add_graph(model,test_data)
+    # pbar = tqdm.trange(epochs, desc=f"Epochs")
 
-    for e in pbar:
+    for e in range(epochs):
         model.train()
         aver_loss= 0
         for _, (data, label) in enumerate(train_dataloader):
@@ -115,12 +120,16 @@ for pt in pts:
         test_outputs = model(test_data)
         test_loss = criterion(test_outputs, test_label).detach().cpu().numpy()
         aver_loss = aver_loss/len(train_dataloader)
-        pbar.set_postfix({'average loss':aver_loss,'test loss':test_loss})
-        writer.add_scalar('average loss',aver_loss,e)
-        writer.add_scalar('test loss',test_loss,e)
+        # pbar.set_postfix({'train loss':aver_loss,'test loss':test_loss})
+        writer.add_scalar(f'train loss',aver_loss,e)
+        writer.add_scalar(f'test loss',test_loss,e)
         # log_write.write(f'{e}\t\t{aver_loss}\t\t{test_loss}\n')
         # log_write.flush()
 
-    torch.save(model.state_dict(), f'./res/{pt}_model.pth')
+    torch.save({
+        'epoch':epochs,
+        'model_state_dict':model.state_dict(),
+        'optimizer_state_dict':optimizer.state_dict()
+        }, f'./res/{pt}/{model_name}.pt')
     writer.close()
 

@@ -1,0 +1,17 @@
+{
+    "model_name":"4head_6layer",
+    "model_type":"transformer",
+    "model_config":{
+        "batch_size":512,
+        "epochs":1000,
+        "lr":0.00002,
+        "b1":0.5,
+        "b2":0.999,
+        "scaled_dim":256,
+        "d_model":256,
+        "nhead":4,
+        "n_layer":6,
+        "loss":"L1Loss",
+        "optimizer":"Adam"
+    }
+}
