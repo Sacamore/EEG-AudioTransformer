@@ -1,0 +1,18 @@
+{
+    "model_name":"head4_layer6_prev3_feat40",
+    "model_type":"transformer",
+    "model_config":{
+        "prv_frame":3,
+        "batch_size":512,
+        "epochs":1000,
+        "lr":0.00002,
+        "b1":0.5,
+        "b2":0.999,
+        "scaled_dim":256,
+        "d_model":256,
+        "nhead":4,
+        "n_layer":6,
+        "loss":"L1Loss",
+        "optimizer":"Adam"
+    }
+}

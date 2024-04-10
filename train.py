@@ -21,7 +21,7 @@ feat_path = r'./feat'
 config_path = r'./config'
 
 pts = ['sub-%02d'%i for i in range(1,11)]
-model_name = 'h4l6p3e4000'
+model_name = 'h4l6p3f40e10000'
 
 with open(os.path.join(config_path,f'{model_name}.json'),'r') as f:
     cfg = json.load(f)['model_config']
@@ -44,7 +44,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def loadData(pt):
-    return np.load(os.path.join(feat_path,f'{pt}_data.npy')),np.load(os.path.join(feat_path,f'{pt}_label.npy'))
+    return np.load(os.path.join(feat_path,f'{pt}_data.npy')),np.load(os.path.join(feat_path,f'{pt}_label_40.npy'))
 
 def splitData(total_data,total_label):
     # 随机打乱数据索引
@@ -164,19 +164,5 @@ for pt in pts:
         'optimizer_state_dict':optimizer.state_dict()
         }, f'./res/{pt}/{model_name}.pt')
     
-    try:
-        origin_melspec_fig = plt.figure()
-        librosa.display.specshow(test_mel,sr=16000,x_axis='time', y_axis='mel')
-        plt.colorbar(format='%+2.0f dB')        
-        plt.title(f'{pt}-origin')
-        writer.add_figure(tag=f"{pt}-origin log Mel spectrogram",figure=origin_melspec_fig)
-
-        model_melspec_fig = plt.figure()
-        librosa.display.specshow(test_outputs,sr=16000,x_axis='time', y_axis='mel')
-        plt.colorbar(format='%+2.0f dB')        
-        plt.title(f'{pt}-model')
-        writer.add_figure(tag=f"{pt}-model log Mel spectrogram",figure=model_melspec_fig)
-    except:
-        pass
     writer.close()
 

@@ -13,6 +13,7 @@ from pynwb import NWBHDF5IO
 import MelFilterBank as mel
 from collections import OrderedDict 
 import tgt
+import librosa
 
 #Small helper function to speed up the hilbert transform by extending the length of data to the next power of 2
 hilbert3 = lambda x: scipy.signal.hilbert(x, scipy.fftpack.next_fast_len(len(x)),axis=0)[:len(x)]
@@ -139,10 +140,14 @@ def extractMelSpecs(audio, sr, windowLength=0.05, frameshift=0.01):
         a = audio[start_audio:stop_audio]
         spec = np.fft.rfft(win*a)
         spectrogram[w,:] = spec
-    mfb = mel.MelFilterBank(spectrogram.shape[1], 23, sr)
+    mfb = mel.MelFilterBank(spectrogram.shape[1], 80, sr)
     spectrogram = np.abs(spectrogram)
     spectrogram = (mfb.toLogMels(spectrogram)).astype('float')
     return spectrogram
+    # spectrogram = librosa.feature.melspectrogram(y=audio.astype('float'),sr=sr,n_fft=int(np.floor(windowLength*sr)),hop_length=int(np.floor(frameshift*sr)),center=False,n_mels=23)
+    # spectrogram = librosa.power_to_db(spectrogram,ref=np.max)
+    # return spectrogram.T
+
 
 def nameVector(elecs, modelOrder=4):
     """

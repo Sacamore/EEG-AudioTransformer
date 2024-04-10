@@ -42,7 +42,7 @@ class MelFilterBank():
         return retSum
     
     def fuzz(self, x):
-        return x + 0.0000001
+        return x + 1e-10
     
     def freqToBin(self, freq, sampleRate, specSize):
         return int(math.floor((freq / (sampleRate / 2.0)) * specSize))
