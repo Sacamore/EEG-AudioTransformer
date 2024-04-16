@@ -15,6 +15,7 @@ from collections import OrderedDict
 import tgt
 import librosa
 
+
 #Small helper function to speed up the hilbert transform by extending the length of data to the next power of 2
 hilbert3 = lambda x: scipy.signal.hilbert(x, scipy.fftpack.next_fast_len(len(x)),axis=0)[:len(x)]
 
@@ -40,7 +41,8 @@ def extractHG(data, sr, windowLength=0.05, frameshift=0.01):
     #Linear detrend
     data = scipy.signal.detrend(data,axis=0)
     #Number of windows
-    numWindows = int(np.floor((data.shape[0]-windowLength*sr)/(frameshift*sr)))
+    # numWindows = int(np.floor((data.shape[0]-windowLength*sr)/(frameshift*sr)))
+    numWindows = int(np.round(data.shape[0]/(frameshift*sr)))
     #Filter High-Gamma Band
     sos = scipy.signal.iirfilter(4, [70/(sr/2),170/(sr/2)],btype='bandpass',output='sos')
     data = scipy.signal.sosfiltfilt(sos,data,axis=0)
@@ -53,9 +55,12 @@ def extractHG(data, sr, windowLength=0.05, frameshift=0.01):
     #Create feature space
     data = np.abs(hilbert3(data))
     feat = np.zeros((numWindows,data.shape[1]))
+    data = np.pad(data,((int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),(0,0)),mode='reflect')
     for win in range(numWindows):
         start= int(np.floor((win*frameshift)*sr))
         stop = int(np.floor(start+windowLength*sr))
+        if stop > data.shape[0]:
+            stop = data.shape[0]
         feat[win,:] = np.mean(data[start:stop,:],axis=0)
     return feat
 
@@ -131,22 +136,29 @@ def extractMelSpecs(audio, sr, windowLength=0.05, frameshift=0.01):
     spectrogram: array (numWindows, numFilter)
         Logarithmic mel scaled spectrogram
     """
-    numWindows=int(np.floor((audio.shape[0]-windowLength*sr)/(frameshift*sr)))
-    win = np.hanning(np.floor(windowLength*sr + 1))[:-1]
-    spectrogram = np.zeros((numWindows, int(np.floor(windowLength*sr / 2 + 1))),dtype='complex')
-    for w in range(numWindows):
-        start_audio = int(np.floor((w*frameshift)*sr))
-        stop_audio = int(np.floor(start_audio+windowLength*sr))
-        a = audio[start_audio:stop_audio]
-        spec = np.fft.rfft(win*a)
-        spectrogram[w,:] = spec
-    mfb = mel.MelFilterBank(spectrogram.shape[1], 80, sr)
-    spectrogram = np.abs(spectrogram)
-    spectrogram = (mfb.toLogMels(spectrogram)).astype('float')
-    return spectrogram
-    # spectrogram = librosa.feature.melspectrogram(y=audio.astype('float'),sr=sr,n_fft=int(np.floor(windowLength*sr)),hop_length=int(np.floor(frameshift*sr)),center=False,n_mels=23)
-    # spectrogram = librosa.power_to_db(spectrogram,ref=np.max)
-    # return spectrogram.T
+    # numWindows=int(np.floor((audio.shape[0]-windowLength*sr)/(frameshift*sr)))
+    # win = np.hanning(np.floor(windowLength*sr + 1))[:-1]
+    # spectrogram = np.zeros((numWindows, int(np.floor(windowLength*sr / 2 + 1))),dtype='complex')
+    # for w in range(numWindows):
+    #     start_audio = int(np.floor((w*frameshift)*sr))
+    #     stop_audio = int(np.floor(start_audio+windowLength*sr))
+    #     a = audio[start_audio:stop_audio]
+    #     spec = np.fft.rfft(win*a)
+    #     spectrogram[w,:] = spec
+    # mfb = mel.MelFilterBank(spectrogram.shape[1], 40, sr)
+    # spectrogram = np.abs(spectrogram)
+    # spectrogram = (mfb.toLogMels(spectrogram)).astype('float')
+    # return spectrogram
+    audio = librosa.util.normalize(audio/32767) * 0.95
+    audio = np.pad(audio.astype('float'),(int(np.floor((windowLength-frameshift)*sr/2)), int(np.floor((windowLength-frameshift)*sr/2))),mode='reflect')
+    spectrogram = librosa.feature.melspectrogram(y=audio,sr=sr,n_fft=int(np.floor(windowLength*sr)),hop_length=int(np.floor(frameshift*sr)),center=False,n_mels=40)
+    spectrogram = np.log(spectrogram + 1e-5)
+    return spectrogram.T
+
+    # mfb = librosa.filters.mel(sr=sr,n_fft=windowLength*sr,n_mels=40,fmin=0,fmax=sr/2)
+    # hann_window = np.hanning(windowLength*sr)
+    # audio =np.pad(audio,(int((windowLength-frameshift)*sr),int((windowLength-frameshift)*sr)),mode='reflect')
+    # spec = np.stf
 
 
 def nameVector(elecs, modelOrder=4):
@@ -262,3 +274,37 @@ def createPhonesData(path,sub,num,output_path):
 
 def toMFCC(logMel):
     return scipy.fftpack.dct(logMel,type=2,axis=1,norm='ortho')[:,:13]
+
+
+import torch
+from glob import glob
+import matplotlib.pyplot as plt
+
+def load_checkpoint(filepath):
+    assert os.path.isfile(filepath)
+    print("Loading '{}'".format(filepath))
+    checkpoint_dict = torch.load(filepath)
+    print("Complete.")
+    return checkpoint_dict
+
+
+def save_checkpoint(filepath, obj):
+    print("Saving checkpoint to {}".format(filepath))
+    torch.save(obj, filepath)
+    print("Complete.")
+
+
+def scan_checkpoint(cp_dir, prefix):
+    pattern = os.path.join(cp_dir, prefix + '????????')
+    cp_list = glob(pattern)
+    if len(cp_list) == 0:
+        return None
+    return sorted(cp_list)[-1]
+
+def plot_spectrogram(spec,sr,hop_len,n_fft):
+    fig = plt.figure(figsize=(10,4))
+    librosa.display.specshow(spec.T,sr=sr,hop_length=hop_len,n_fft=n_fft,x_axis='time',y_axis='mel')
+    plt.colorbar(format='%+2.0f dB')
+    fig.draw()
+    plt.close()
+    return fig
