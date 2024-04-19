@@ -1,5 +1,7 @@
 /__pycache__
 /res
 /mel_files
+/logs
+/.vscode
 tensorboard.sh
 nohup.out

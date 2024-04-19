@@ -79,7 +79,7 @@ class TransformerModel(nn.Module):
         return res
 
 class Model(nn.Module):
-    def __init__(self,input_dim,scaled_dim,prv_dim,output_dim,d_model,nhead,n_layer,dropout = 0.1) -> None:
+    def __init__(self,input_dim,scaled_dim,seg_size,output_dim,d_model,nhead,n_layer,dropout = 0.1) -> None:
         super().__init__()
         self.l1 = nn.Sequential(
             nn.Linear(input_dim,scaled_dim*2),
@@ -96,7 +96,7 @@ class Model(nn.Module):
         # )
         # self.transformer = Transformer(d_model,n_layer,nhead)
         self.transformer = TransformerModel(d_model=d_model,nhead=nhead,n_layer=n_layer,dropout=dropout)
-        self.conv1 = nn.Conv1d(scaled_dim,scaled_dim,prv_dim)
+        # self.conv1 = nn.Conv1d(scaled_dim,scaled_dim,prv_dim)
         self.l3 = nn.Sequential(
             nn.Linear(scaled_dim,4*scaled_dim),
             nn.ReLU(),
@@ -113,8 +113,8 @@ class Model(nn.Module):
         # x = x.unsqueeze(-1)
         # x = self.l2(x)
         x = self.transformer(x)
-        x = x.permute(0,2,1)
-        x = self.conv1(x)
-        x = x.squeeze(-1)
+        # x = x.permute(0,2,1)
+        # x = self.conv1(x)
+        # x = x.squeeze(-1)
         x = self.l3(x)
         return x
