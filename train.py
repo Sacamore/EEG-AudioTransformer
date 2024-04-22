@@ -11,7 +11,7 @@ from torch.utils.data import TensorDataset, DataLoader
 # import tqdm
 from tensorboardX import SummaryWriter
 
-import transformer
+import model
 from dataset import EEGAudioDataset
 
 import json
@@ -60,7 +60,7 @@ def train(argu):
         output_dim = test_label.shape[-1]
 
 
-        model = transformer.Model(
+        model = model.Model(
             input_dim=input_dim,
             scaled_dim = scaled_dim,
             seg_size=seg_size,
