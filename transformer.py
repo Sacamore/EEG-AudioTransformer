@@ -29,7 +29,7 @@ class MultiHeadAttention(nn.Module):
         self.key    = PrepareForMultiHeadAttention(d_model, heads, self.d_k, bias)
         self.value  = PrepareForMultiHeadAttention(d_model, heads, self.d_k, bias)
 
-        self.softmax = nn.Softmax(dim=1)
+        self.softmax = nn.Softmax(dim=2)
 
         self.output = nn.Linear(d_model,d_model)
 
@@ -40,14 +40,14 @@ class MultiHeadAttention(nn.Module):
         self.attn = None
 
     def get_scores(self,query:torch.Tensor,key:torch.Tensor):
-        return torch.einsum('ibhd,jbhd -> ijbh',query,key)
+        return torch.einsum('bihd,bjhd -> bijh',query,key)
     
     def prepare_mask(self,mask: torch.Tensor, query_shape:List[int],key_shape: List[int]):
-        assert mask.shape[0] == 1 or mask.shape[0] == query_shape[0]
-        assert mask.shape[1] == key_shape[0]
-        assert mask.shape[2] == 1 or mask.shape[2] == query_shape[1]
+        assert mask.shape[0] == 1 or mask.shape[0] == query_shape[1]
+        assert mask.shape[1] == key_shape[1]
+        assert mask.shape[2] == 1 or mask.shape[2] == query_shape[0]
 
-        mask = mask.unsqueeze(-1)
+        mask = mask.unsqueeze(0)
 
         return mask
 
@@ -57,7 +57,7 @@ class MultiHeadAttention(nn.Module):
                 value:torch.Tensor,
                 mask:Optional[torch.Tensor] = None):
         
-        seq_len,batch_size,_ = query.shape
+        batch_size,seq_len,_ = query.shape
 
         if mask is not None:
             mask = self.prepare_mask(mask,query.shape,key.shape)
@@ -75,11 +75,11 @@ class MultiHeadAttention(nn.Module):
 
         attn = self.dropout(attn)
 
-        x = torch.einsum('ijbh,jbhd -> ibhd',attn,value)
+        x = torch.einsum('bijh,bjhd -> bihd',attn,value)
 
         self.attn = attn.detach()
 
-        x = x.reshape(seq_len,batch_size,-1)
+        x = x.reshape(batch_size,seq_len,-1)
 
         return self.output(x)
     
@@ -94,9 +94,9 @@ class RotaryPositionalEmbeddings(nn.Module):
         self.sin_cached = None
 
     def _build_cache(self,x:torch.Tensor):
-        if self.cos_cached is not None and x.shape[0] <= self.cos_cached.shape[0]:
+        if self.cos_cached is not None and x.shape[1] <= self.cos_cached.shape[0]:
             return
-        seq_len = x.shape[0]
+        seq_len = x.shape[1]
 
         theta = 1. / (self.base ** (torch.arange(0,self.d,2).float()/self.d)).to(x.device)
 
@@ -106,8 +106,8 @@ class RotaryPositionalEmbeddings(nn.Module):
 
         idx_theta2 = torch.cat([idx_theta,idx_theta],dim=1)
 
-        self.cos_cached = idx_theta2.cos()[:,None,None,:]
-        self.sin_cached = idx_theta2.sin()[:,None,None,:]
+        self.cos_cached = idx_theta2.cos()[None,:,None,:]
+        self.sin_cached = idx_theta2.sin()[None,:,None,:]
 
     def _neg_half(self,x:torch.Tensor):
         d_2 = self.d // 2
@@ -119,7 +119,7 @@ class RotaryPositionalEmbeddings(nn.Module):
 
         neg_half_x = self._neg_half(x_rope)
 
-        x_rope = (x_rope * self.cos_cached[:x.shape[0]]) + (neg_half_x*self.sin_cached[:x.shape[0]])
+        x_rope = (x_rope * self.cos_cached[:x.shape[1]]) + (neg_half_x*self.sin_cached[:x.shape[1]])
 
         return torch.cat((x_rope,x_pass),dim=-1)
     
@@ -133,7 +133,7 @@ class RotaryPEMultiHeadAttention(MultiHeadAttention):
         self.key_rotary_pe = RotaryPositionalEmbeddings(d_rope)
 
     def get_scores(self, query: torch.Tensor, key: torch.Tensor):
-        return torch.einsum('ibhd,jbhd->ijbh',self.query_rotary_pe(query),self.key_rotary_pe(key))
+        return torch.einsum('bihd,bjhd->bijh',self.query_rotary_pe(query),self.key_rotary_pe(key))
     
 
 class FeedForward(nn.Module):
@@ -141,7 +141,7 @@ class FeedForward(nn.Module):
                 d_model:int,
                 d_ff:int,
                 dropout:float=0.1,
-                activation = nn.Relu(),
+                activation = nn.ReLU(),
                 is_gated:bool=False,
                 bias1:bool=True,
                 bias2:bool=True,
@@ -176,6 +176,25 @@ class FeedForward(nn.Module):
         x= self.dropout(x)
 
         return self.layer2(x)
+
+class ConvFeedForward(FeedForward):
+    def __init__(self, d_model: int, d_ff: int, conv_kernel_size: int = 9, conv_padding: int = 4 ,dropout: float = 0.1, activation=nn.ReLU(), is_gated: bool = False, bias1: bool = True, bias2: bool = True, bias_gate: bool = True):
+        super().__init__(d_model, d_ff, dropout, activation, is_gated, bias1, bias2, bias_gate)
+        self.layer1 = nn.Conv1d(d_model,d_ff,conv_kernel_size,1,conv_padding)
+        self.layer2 = nn.Conv1d(d_ff,d_model,1,1)
+    def forward(self,x:torch.Tensor):
+        x = x.permute(0,2,1)
+        g = self.activation(self.layer1(x))
+        if self.is_gated:
+            x = g*self.linear_v(x)
+        else:
+            x = g
+        x= self.dropout(x)
+        x = self.layer2(x)
+        x = x.permute(0,2,1)
+        return x
+
+        
 
 class TransformerLayer(nn.Module):
     def __init__(self,*,
@@ -267,3 +286,6 @@ class Transformer(nn.Module):
         enc = self.encode(src,src_mask)
         return self.decode(enc,src_mask,tgt,tgt_mask)  
 
+def subsequent_mask(seq_len):
+    mask = torch.tril(torch.ones(seq_len, seq_len)).to(torch.bool).unsqueeze(-1)
+    return mask

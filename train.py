@@ -11,7 +11,7 @@ from torch.utils.data import TensorDataset, DataLoader
 # import tqdm
 from tensorboardX import SummaryWriter
 
-import model
+import models
 from dataset import EEGAudioDataset
 
 import json
@@ -24,21 +24,29 @@ pts = ['sub-%02d'%i for i in range(1,11)]
 def train(argu):
     # open config file
     with open(os.path.join(config_path,f'{argu.config}.json'),'r') as f:
-        cfg = json.load(f)['model_config']
+        cfg = json.load(f)
+        model_cfg = cfg['model_config']
+        data_cfg = cfg['data_config']
 
     # load config 
     model_name = argu.config
-    seg_size = cfg['prv_frame']
-    batch_size = cfg['batch_size']
-    end_epoch = cfg['epochs'] if argu.epoch is None else argu.epoch
-    lr = cfg['lr']
-    b1 = cfg['b1']
-    b2 = cfg['b2']
-    weight_decay = cfg['weight_decay']
-    scaled_dim = cfg['scaled_dim']
-    d_model = cfg['d_model']
-    nhead = cfg['nhead']
-    n_layer = cfg['n_layer']
+    seg_size = model_cfg['prv_frame']
+    batch_size = model_cfg['batch_size']
+    end_epoch = model_cfg['epochs'] if argu.epoch is None else argu.epoch
+    lr = model_cfg['lr']
+    b1 = model_cfg['b1']
+    b2 = model_cfg['b2']
+    weight_decay = model_cfg['weight_decay']
+    scaled_dim = model_cfg['scaled_dim']
+    d_model = model_cfg['d_model']
+    nhead = model_cfg['nhead']
+    n_layer = model_cfg['n_layer']
+
+    data_path = data_cfg['data_path']
+    win_len = data_cfg['win_len']
+    frame_shift = data_cfg['frame_shift']
+    eeg_sr = data_cfg['eeg_sr']
+    audio_sr = data_cfg['audio_sr']
 
     tensor_type = torch.cuda.FloatTensor
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -50,27 +58,27 @@ def train(argu):
         end_sub = argu.sub
     
     for pt in pts[start_sub:end_sub]:
-        dataset = EEGAudioDataset(pt)
+        dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr)
         train_data,train_label,test_data,test_label = dataset.prepareData(seg_size=seg_size)
-
-        test_mfcc = utils.toMFCC(test_label)
+        test_mfcc = utils.toMFCC(test_label[:,-1,:40])
         test_mel = test_data
 
         input_dim = test_data.shape[-1]
         output_dim = test_label.shape[-1]
 
 
-        model = model.Model(
+        model = models.Model(
             input_dim=input_dim,
-            scaled_dim = scaled_dim,
-            seg_size=seg_size,
             output_dim=output_dim,
+            seg_size=seg_size,
             d_model=d_model,
             nhead=nhead,
             n_layer=n_layer
         ).to(device)
         criterion = nn.L1Loss(reduction='mean').to(device)
         optimizer = torch.optim.Adam(model.parameters(),lr=lr,betas=(b1,b2),weight_decay=weight_decay)
+
+        loss_fn = lambda x,y:0.8*criterion(x[:,:40], y[:,-1,:40])+0.1*criterion(x[:,40],y[:,-1,40])+0.1*criterion(x[:,41],y[:,-1,41])
 
         start_epoch = 0
         checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}',model_name)
@@ -104,7 +112,8 @@ def train(argu):
                 label = label.to(device)
                 label = label.type(tensor_type)
                 outputs = model(data)
-                loss = criterion(outputs, label)
+                loss = loss_fn(outputs,label)
+
                 aver_loss+=loss.detach().cpu().numpy()
                 optimizer.zero_grad()
                 loss.backward()
@@ -114,21 +123,27 @@ def train(argu):
             if e % argu.summary_interval == 0:
                 model.eval()
                 test_outputs = model(test_data)
-                test_loss = criterion(test_outputs, test_label).detach().cpu().numpy()
+                test_outputs = torch.clamp(test_outputs,min=np.log(1e-5))
+                test_loss = loss_fn(test_outputs,test_label).detach().cpu().numpy()
                 aver_loss = aver_loss/len(train_dataloader)
                 writer.add_scalar(f'train loss',aver_loss,e)
                 writer.add_scalar(f'test loss',test_loss,e)
-                model_mfcc = utils.toMFCC(test_outputs.detach().cpu().numpy())
+                model_mfcc = utils.toMFCC(test_outputs[:,:40].detach().cpu().numpy())
                 eu_dis = 0
                 for i in range(test_mfcc.shape[0]):
                     eu_dis += np.linalg.norm(model_mfcc[i] - test_mfcc[i])
                 mcd = eu_dis/test_mfcc.shape[0]
                 writer.add_scalar(f'test mcd',mcd,e)
-
-                for name,param in model.named_parameters():
-                    writer.add_histogram(name,param.clone().cpu().data.numpy(),e)
-                    if param.grad is not None:
-                        writer.add_histogram(name+'/grad',param.grad.clone().cpu().data.numpy(),e)
+                if e%argu.graph_interval == 0:
+                    if e == 0:
+                        writer.add_figure('origin melspec',utils.plot_spectrogram(test_label[:,-1,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
+                    writer.add_figure('test melspec',utils.plot_spectrogram(test_outputs[:,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
+                    writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
+                    writer.add_figure('test zcr',utils.plot_graph(test_label[:,-1,41].detach().cpu().numpy(),test_outputs[:,41].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
+                # for name,param in model.named_parameters():
+                #     writer.add_histogram(name,param.clone().cpu().data.numpy(),e)
+                #     if param.grad is not None:
+                #         writer.add_histogram(name+'/grad',param.grad.clone().cpu().data.numpy(),e)
 
         # test_outputs = model(test_data).detach().cpu().numpy()
         torch.save({
@@ -152,6 +167,7 @@ def parseCommand():
     parser.add_argument('--seed',default=2024,type=int)
     parser.add_argument('--sub',default=None,type=int)
     parser.add_argument('--summary_interval',default=5,type=int)
+    parser.add_argument('--graph_interval',default=50,type=int)
     # TODO: add argument to control print interval, summary interval, validate interval
 
     argu = parser.parse_args()
