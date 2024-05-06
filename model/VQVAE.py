@@ -78,3 +78,6 @@ class FeatDecoder(nn.Module):
         rec = self.rec(rec_feat)
         return rec
 
+class CrossVQEmbedding(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
