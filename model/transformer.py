@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Optional,List
 
+import copy
 import torch
 import torch.utils.data as utils_data
 import torch.nn as nn
@@ -33,7 +34,7 @@ class MultiHeadAttention(nn.Module):
 
         self.output = nn.Linear(d_model,d_model)
 
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout,inplace=True)
         
         self.scale = 1/np.sqrt(self.d_k)
 
@@ -159,7 +160,7 @@ class FeedForward(nn.Module):
         self.layer1 = nn.Linear(d_model,d_ff,bias1)
         self.layer2 = nn.Linear(d_ff,d_model,bias2)
 
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout,inplace=True)
 
         self.activation = activation
 
@@ -209,7 +210,7 @@ class TransformerLayer(nn.Module):
         self.self_attn = self_attn
         self.src_attn = src_attn
         self.feed_forward = feed_forward
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout,inplace=True)
         self.norm_self_attn = nn.LayerNorm([d_model])
         if self.src_attn is not None:
             self.norm_src_attn = nn.LayerNorm([d_model])
@@ -239,7 +240,7 @@ class TransformerLayer(nn.Module):
 class Encoder(nn.Module):
     def __init__(self,layer:TransformerLayer,n_layers:int) -> None:
         super().__init__()
-        self.layers = nn.ModuleList([layer for _ in range(n_layers)])
+        self.layers = nn.ModuleList([copy.deepcopy(layer) for _ in range(n_layers)])
         # self.norm = nn.LayerNorm([layer.size])
 
     def forward(self,x:torch.Tensor,mask:torch.Tensor):
@@ -251,11 +252,11 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, layer: TransformerLayer,n_layers:int) -> None:
         super().__init__()
-        self.layers = nn.ModuleList([layer for _ in range(n_layers)])
+        self.layers = nn.ModuleList([copy.deepcopy(layer) for _ in range(n_layers)])
         # self.norm = nn.LayerNorm([layer.size])
     def forward(self, x:torch.Tensor,memory:torch.Tensor,src_mask:torch.Tensor,tgt_mask:torch.Tensor):
         for layer in self.layers:
-            x = layer(x=x,maks=tgt_mask,src=memory,src_mask=src_mask)
+            x = layer(x=x,mask=tgt_mask,src=memory,src_mask=src_mask)
         
         return x
     

@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import torch.backends
 import utils
 
 import numpy as np
@@ -11,7 +12,7 @@ from torch.utils.data import TensorDataset, DataLoader
 # import tqdm
 from tensorboardX import SummaryWriter
 
-import models
+import model.models as models
 from dataset import EEGAudioDataset
 
 import json
@@ -30,7 +31,8 @@ def train(argu):
 
     # load config 
     model_name = argu.config
-    seg_size = model_cfg['prv_frame']
+    seg_size = model_cfg['seg_size']
+    pred_size = model_cfg['pred_size']
     batch_size = model_cfg['batch_size']
     end_epoch = model_cfg['epochs'] if argu.epoch is None else argu.epoch
     lr = model_cfg['lr']
@@ -47,6 +49,7 @@ def train(argu):
     frame_shift = data_cfg['frame_shift']
     eeg_sr = data_cfg['eeg_sr']
     audio_sr = data_cfg['audio_sr']
+    pad_mode = data_cfg['pad_mode']
 
     tensor_type = torch.cuda.FloatTensor
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -58,7 +61,7 @@ def train(argu):
         end_sub = argu.sub
     
     for pt in pts[start_sub:end_sub]:
-        dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr)
+        dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode)
         train_data,train_label,test_data,test_label = dataset.prepareData(seg_size=seg_size)
         test_mfcc = utils.toMFCC(test_label[:,-1,:40])
         test_mel = test_data
@@ -78,7 +81,7 @@ def train(argu):
         criterion = nn.L1Loss(reduction='mean').to(device)
         optimizer = torch.optim.Adam(model.parameters(),lr=lr,betas=(b1,b2),weight_decay=weight_decay)
 
-        loss_fn = lambda x,y:0.8*criterion(x[:,:40], y[:,-1,:40])+0.1*criterion(x[:,40],y[:,-1,40])+0.1*criterion(x[:,41],y[:,-1,41])
+        loss_fn = lambda x,y:0.8*(criterion(x[:,:40], y[:,-1,:40])+criterion(torch.exp(x[:,:40]),torch.exp(y[:,-1,:40])))+0.2*criterion(x[:,40],y[:,-1,40]) #+0.15*criterion(x[:,41],y[:,-1,41])
 
         start_epoch = 0
         checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}',model_name)
@@ -103,7 +106,6 @@ def train(argu):
         writer = SummaryWriter(f'./logs/{pt}/{model_name}')
 
         for e in range(start_epoch,end_epoch):
-            # TODO: rewrite validate
             model.train()
             aver_loss= 0
             for _, (data, label) in enumerate(train_dataloader):
@@ -139,7 +141,7 @@ def train(argu):
                         writer.add_figure('origin melspec',utils.plot_spectrogram(test_label[:,-1,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
                     writer.add_figure('test melspec',utils.plot_spectrogram(test_outputs[:,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
                     writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
-                    writer.add_figure('test zcr',utils.plot_graph(test_label[:,-1,41].detach().cpu().numpy(),test_outputs[:,41].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
+                    # writer.add_figure('test zcr',utils.plot_graph(test_label[:,-1,41].detach().cpu().numpy(),test_outputs[:,41].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
                 # for name,param in model.named_parameters():
                 #     writer.add_histogram(name,param.clone().cpu().data.numpy(),e)
                 #     if param.grad is not None:
@@ -176,7 +178,9 @@ def parseCommand():
 if __name__ == '__main__':
     argu = parseCommand()
     os.environ["CUDA_VISIBLE_DEVICES"] = argu.use_gpu_num
+    np.random.seed(seed=argu.seed)
     torch.manual_seed(argu.seed)
+    torch.backends.cudnn.deterministic = True
     if torch.cuda.is_available():
         torch.cuda.manual_seed(argu.seed)
     train(argu)
