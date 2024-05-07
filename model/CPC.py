@@ -1,98 +1,78 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Cross_CPC(nn.Module):
-    def __init__(self, embedding_dim, hidden_dim, context_dim, num_layers, n_prediction_steps=1, min_start_steps=1):
-        super(Cross_CPC, self).__init__()
+    def __init__(self,embedding_dim:int,hidden_dim:int,context_dim:int,num_layers:int,predict_step:int=1,min_start_step:int=1) -> None:
+        super().__init__()
+
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.context_dim = context_dim
         self.num_layers = num_layers
-        self.n_prediction_steps = n_prediction_steps
-        self.min_start_steps = min_start_steps
-        self.softmax  = nn.Softmax()
-        self.lsoftmax = nn.LogSoftmax()
+        self.prediction_step = predict_step
+        self.min_start_step = min_start_step
+
+        self.softmax = nn.Softmax()
+        self.logsoftmax = nn.LogSoftmax()
+
+        self.audio_lstm = nn.LSTM(embedding_dim,context_dim,num_layers,batch_first=True)
+        self.eeg_lstm = nn.LSTM(embedding_dim,context_dim,num_layers,batch_first=True)
         
-        # Autoregressive LSTM network for video
-        self.video_ar_lstm = nn.LSTM(embedding_dim, context_dim, num_layers, batch_first=True)
-        
-        # Autoregressive LSTM network for audio
-        self.audio_ar_lstm = nn.LSTM(embedding_dim, context_dim, num_layers, batch_first=True)
-        
-        # Predictor network for video
-        self.video_predictors = nn.ModuleList([
-            nn.Linear(context_dim, embedding_dim) for _ in range(n_prediction_steps)
+        self.audio_predictor = nn.ModuleList([
+            nn.Linear(context_dim,context_dim) for _ in range(predict_step-1)
         ])
-        
-        # Predictor network for audio
-        self.audio_predictors = nn.ModuleList([
-            nn.Linear(context_dim, embedding_dim) for _ in range(n_prediction_steps)
+
+        self.eeg_predictor = nn.ModuleList([
+            nn.Linear(context_dim,context_dim) for _ in range(predict_step-1)
         ])
-    
-    """
-    video_forward_seq took the first t_samples+1 samples [0:t_samples].
-    video_encode_samples took the samples [t_samples+1:t_samples+self.n_prediction_steps] as true future results.
-    The LSTM utilized video_forward_seq to obtain video_context,
-    then used video_predictors to predict video_pred.
-    Calculate NCE between pred and encode_samples.
-    """
-    def forward(self, video_vq, audio_vq):
-        batch_dim, time_length, _ = video_vq.shape# [batch_dim, time_length, embedding_dim] e.g.[80, 10, 256]
-        # closedOpen
-        # Choose any number from [3, 8) as a starting point, then predict the next two digits. Therefore, forward_seq has a minimum length of 4 (starting from 0).
-        t_samples = (torch.randint(time_length - self.n_prediction_steps - self.min_start_steps, size=(1,)) + self.min_start_steps).long() # randomly pick time stamps
-        # losses = list()
-        nce = 0 # average over timestep and batch
-        video_encode_samples = torch.empty((self.n_prediction_steps,batch_dim,self.embedding_dim), device = video_vq.device).double() # e.g. size 5*80*256
-        audio_encode_samples = torch.empty((self.n_prediction_steps,batch_dim,self.embedding_dim), device = audio_vq.device).double() # e.g. size 5*80*256
-        for i in range(1, self.n_prediction_steps+1):# closedOpen
-            video_encode_samples[i-1] = video_vq[:,t_samples+i,:].reshape(batch_dim,self.embedding_dim) # z_tk e.g. size 80*256
-            audio_encode_samples[i-1] = audio_vq[:,t_samples+i,:].reshape(batch_dim,self.embedding_dim) # z_tk e.g. size 80*256
-        video_forward_seq = video_vq[:,:t_samples+1,:] # e.g. size 80*t_samples*256
-        audio_forward_seq = audio_vq[:,:t_samples+1,:] # e.g. size 80*t_samples*256
-        # Autoregressive LSTM for video
-        video_hidden = (torch.zeros(self.num_layers, batch_dim, self.hidden_dim, device = video_vq.device).float(),
-                  torch.zeros(self.num_layers, batch_dim, self.hidden_dim, device = video_vq.device).float())
-        video_context, video_hidden = self.video_ar_lstm(video_forward_seq, video_hidden)
+
+
+    def forward(self,audio_vq:torch.Tensor,eeg_vq:torch.Tensor):
+        B,T,D  = audio_vq.shape
+        t_samples = (torch.randint(T - self.prediction_step - self.min_start_step, size=(1,)) + self.min_start_step).long()
+        nce = 0
+
+        audio_encode_samples = torch.empty((self.prediction_step,B,self.embedding_dim),device=audio_vq.device).double()
+        eeg_encode_samples = torch.empty((self.prediction_step,B,self.embedding_dim),device=eeg_vq.device).double()
+
+        for i in range(1,self.prediction_step+1):
+            audio_encode_samples[i-1,:,:] = audio_vq[:,t_samples+i,:].reshape(B,self.embedding_dim)
+            eeg_encode_samples[i-1,:,:] = eeg_vq[:,t_samples+i,:].reshape(B,self.embedding_dim)
         
-        # Autoregressive LSTM for audio
-        audio_hidden = (torch.zeros(self.num_layers, batch_dim, self.hidden_dim, device = audio_vq.device).float(),
-                  torch.zeros(self.num_layers, batch_dim, self.hidden_dim, device = audio_vq.device).float())
-        audio_context, audio_hidden = self.audio_ar_lstm(audio_forward_seq, audio_hidden)
+        audio_forward_seq = audio_vq[:,:t_samples+1,:]
+        eeg_forward_seq = eeg_vq[:,:t_samples+1,:]
+
+        audio_context,_ = self.audio_lstm(audio_forward_seq)
+        eeg_context,_ = self.eeg_lstm(eeg_forward_seq)
+
+        audio_context = audio_context[:,-1,:].reshape(B,self.context_dim)
+        eeg_context = eeg_context[:,-1,:].reshape(B,self.context_dim)
+
+        audio_pred = torch.empty((self.prediction_step,B,self.embedding_dim),device=audio_vq.device).double()
+        eeg_pred = torch.empty((self.prediction_step,B,self.embedding_dim),device=eeg_vq.device).double
+
+        for i in range(self.prediction_step):
+            audio_pred[i] = self.audio_predictor[i](audio_context).transpose
+            eeg_pred[i] = self.eeg_predictor[i](eeg_context)
         
-        video_context = video_context[:,t_samples,:].reshape(batch_dim,self.context_dim) # c_t e.g. size 80*512
-        audio_context = audio_context[:,t_samples,:].reshape(batch_dim,self.context_dim) # c_t e.g. size 80*512
+        for i in range(self.prediction_step):
+            aa = torch.mm(audio_encode_samples[i],audio_pred[i].T)
+            ee = torch.mm(eeg_encode_samples[i],eeg_pred[i].T)
+            ae = torch.mm(audio_encode_samples[i],eeg_pred[i].T)
+            ea = torch.mm(eeg_encode_samples[i],audio_pred[i].T)
+            aa_accuracy = torch.sum(torch.eq(torch.argmax(self.softmax(aa),dim = 0),0.))/B
+            ee_accuracy = torch.sum(torch.eq(torch.argmax(self.softmax(ee),dim = 0),0.))/B
+            ae_accuracy = torch.sum(torch.eq(torch.argmax(self.softmax(ae),dim = 0),0.))/B
+            ea_accuracy = torch.sum(torch.eq(torch.argmax(self.softmax(ea),dim = 0),0.))/B
+            nce = nce + torch.sum(torch.diag(self.logsoftmax(ae))) + torch.sum(torch.diag(self.logsoftmax(ea)))\
+                  +0.1*(torch.sum(torch.diag(self.logsoftmax(aa))) + torch.sum(torch.diag(self.logsoftmax(ee))))
         
-        video_pred = torch.empty((self.n_prediction_steps,batch_dim,self.embedding_dim), device = video_vq.device).double() # e.g. size 5*80*256
-        audio_pred = torch.empty((self.n_prediction_steps,batch_dim,self.embedding_dim), device = audio_vq.device).double() # e.g. size 5*80*256
-        for i in range(0, self.n_prediction_steps):
-            video_linear = self.video_predictors[i]
-            video_pred[i] = video_linear(video_context) #e.g. size 80*512 -> 80*256
-            audio_linear = self.audio_predictors[i]
-            audio_pred[i] = audio_linear(audio_context) #e.g. size 80*512 -> 80*256
-        for i in range(0, self.n_prediction_steps):
-            total1 = torch.mm(video_encode_samples[i], torch.transpose(audio_pred[i],0,1)) # e.g. size 80*80
-            total2 = torch.mm(audio_encode_samples[i], torch.transpose(video_pred[i],0,1)) # e.g. size 80*80
-            total3 = torch.mm(video_encode_samples[i], torch.transpose(video_pred[i],0,1)) # e.g. size 80*80
-            total4 = torch.mm(audio_encode_samples[i], torch.transpose(audio_pred[i],0,1)) # e.g. size 80*80
-            correct1 = torch.sum(torch.eq(torch.argmax(self.softmax(total1), dim=0), torch.arange(0, batch_dim, device = video_vq.device))) # correct is a tensor
-            correct2 = torch.sum(torch.eq(torch.argmax(self.softmax(total2), dim=0), torch.arange(0, batch_dim, device = video_vq.device))) # correct is a tensor
-            correct3 = torch.sum(torch.eq(torch.argmax(self.softmax(total3), dim=0), torch.arange(0, batch_dim, device = video_vq.device))) # correct is a tensor
-            correct4 = torch.sum(torch.eq(torch.argmax(self.softmax(total4), dim=0), torch.arange(0, batch_dim, device = video_vq.device))) # correct is a tensor
-            w1 = 1.0
-            w2 = 1.0
-            # Slightly computing self nce for each modality can provide a direction to align different modalities.
-            w3 = 0.1
-            w4 = 0.1
-            nce += w1 * torch.sum(torch.diag(self.lsoftmax(total1))) # nce is a tensor
-            nce += w2 * torch.sum(torch.diag(self.lsoftmax(total2))) # nce is a tensor
-            nce += w3 * torch.sum(torch.diag(self.lsoftmax(total3))) # nce is a tensor
-            nce += w4 * torch.sum(torch.diag(self.lsoftmax(total4))) # nce is a tensor
+        nce = -nce/(B*self.prediction_step)
+
+        return aa_accuracy,ee_accuracy,ae_accuracy,ea_accuracy,nce
+        
+
             
-        nce /= -1.*batch_dim*self.n_prediction_steps
-        accuracy1 = 1.*correct1/batch_dim
-        accuracy2 = 1.*correct2/batch_dim
-        accuracy3 = 1.*correct3/batch_dim
-        accuracy4 = 1.*correct4/batch_dim
-        return accuracy1, accuracy2, accuracy3, accuracy4, nce
+
