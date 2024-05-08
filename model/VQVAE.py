@@ -49,15 +49,15 @@ class ResidualStack(nn.Module):
 
 
 class SemanticDecoder(nn.Module):
-    def __init__(self, input_dim:int , class_num: int) -> None:
+    def __init__(self, input_dim:int , output_dim: int) -> None:
         super().__init__()
         self.aff_input = nn.Linear(input_dim,input_dim)
-        self.classifier = nn.Linear(input_dim,class_num)
+        self.output = nn.Linear(input_dim,output_dim)
     
     def forward(self,input_vq:torch.Tensor):
         feat = self.aff_input(input_vq)
-        class_logits = self.classifier(feat)
-        return class_logits
+        res = self.output(feat)
+        return res
     
 class FeatEncoder(nn.Module):
     def __init__(self,feat_dim:int,d_model:int) -> None:
@@ -80,20 +80,20 @@ class FeatDecoder(nn.Module):
         return rec
 
 class CrossVQEmbeddingEMA(nn.Module):
-    def __init__(self, n_embeddings:int,embedding_dim:int,commitment_cost:float=0.25,decay:float=0.99,epsilon:float=1e-5) -> None:
+    def __init__(self, n_embedding:int,embedding_dim:int,commitment_cost:float=0.25,decay:float=0.99,epsilon:float=1e-5) -> None:
         super().__init__()
         self.commitment_cost = commitment_cost
         self.decay =decay
         self.epsilon=epsilon
 
         init_bound = 1/400
-        embedding = torch.Tensor(n_embeddings,embedding_dim)
+        embedding = torch.Tensor(n_embedding,embedding_dim)
 
         embedding.uniform_(-init_bound,init_bound)
         self.register_buffer("embedding",embedding)
-        self.register_buffer("ema_count",torch.zeros(n_embeddings))
+        self.register_buffer("ema_count",torch.zeros(n_embedding))
         self.register_buffer("ema_weight",self.embedding.clone())
-        self.register_buffer("unactivated_count",-torch.ones(n_embeddings))
+        self.register_buffer("unactivated_count",-torch.ones(n_embedding))
 
     def getDistances(self,flat:torch.Tensor):
         return torch.addmm( torch.sum(self.embedding ** 2,dim=1)+torch.sum(flat ** 2,dim=1,keepdim=True),
@@ -141,13 +141,13 @@ class CrossVQEmbeddingEMA(nn.Module):
             Lcmcm -= torch.log(EScode[i,i]/(EScode_dim1sum[i] + self.epsilon))
         Lcmcm /= B
 
-        a_indices = torch.argmin(a_dis.double(),dim=-1)
-        a_encodings = F.one_hot(a_indices,M).double()
+        a_indices = torch.argmin(a_dis,dim=-1)
+        a_encodings = F.one_hot(a_indices,M)
         a_quantized = F.embedding(a_indices,self.embedding)
         a_quantized = a_quantized.view_as(audio_semantic)
 
-        e_indices = torch.argmin(e_dis.double(),dim=-1)
-        e_encodings = F.one_hot(e_indices,M).double()
+        e_indices = torch.argmin(e_dis,dim=-1)
+        e_encodings = F.one_hot(e_indices,M)
         e_quantized = F.embedding(e_indices,self.embedding)
         e_quantized = e_quantized.view_as(eeg_semantic)
 
@@ -220,29 +220,29 @@ class CrossVQEmbeddingEMA(nn.Module):
         return a_quantized,e_quantized,a_loss,e_loss,a_perplexity,e_perplexity,cmcm_loss,equal_num 
 
 class VQVAEEncoder(nn.Module):
-    def __init__(self,audio_dim:int,eeg_dim:int,audio_output_dim:int,eeg_output_dim:int,n_embeddings:int,embedding_dim:int) -> None:
+    def __init__(self,mel_dim:int,eeg_dim:int,mel_output_dim:int,eeg_output_dim:int,n_embedding:int,embedding_dim:int) -> None:
         super().__init__()
-        self.audio_encoder = FeatEncoder(audio_dim,audio_output_dim)
+        self.mel_encoder = FeatEncoder(mel_dim,mel_output_dim)
         self.eeg_encoder = FeatEncoder(eeg_dim,eeg_output_dim)
-        self.cross_quantizer = CrossVQEmbeddingEMA(n_embeddings,embedding_dim)
-        self.audio_selfattn = TransformerEncoder(input_dim=audio_dim,d_model=embedding_dim)
+        self.cross_quantizer = CrossVQEmbeddingEMA(n_embedding,embedding_dim)
+        self.mel_selfattn = TransformerEncoder(input_dim=mel_dim,d_model=embedding_dim)
         self.eeg_selfattn = TransformerEncoder(input_dim=eeg_dim,d_model=embedding_dim)
     
-    # def AudioVQEncoder(self,audio_feat:torch.Tensor):
-    #     # audio_feat = audio_feat.cuda()
-    #     audio_semantic_res = audio_feat.transpose(0,1).contiguous()
-    #     audio_semantic_res = self.audio_selfattn(audio_semantic_res)
-    #     audio_semantic_res = audio_semantic_res.transpose(0,1).contiguous()
-    #     audio_vq = self.cross_quantizer.vq_embedding(audio_semantic_res)
-    #     return audio_vq,audio_semantic_res
+    def MelVQEncoder(self,mel_feat:torch.Tensor):
+        # audio_feat = audio_feat.cuda()
+        audio_semantic_res = mel_feat.transpose(0,1).contiguous()
+        audio_semantic_res = self.mel_selfattn(audio_semantic_res)
+        audio_semantic_res = audio_semantic_res.transpose(0,1).contiguous()
+        audio_vq = self.cross_quantizer.vq_embedding(audio_semantic_res)
+        return audio_vq#,audio_semantic_res
     
-    # def EEGVQEncoder(self,eeg_feat:torch.Tensor):
-    #     # eeg_feat = eeg_feat.cuda()
-    #     eeg_semantic_res = eeg_feat.transpose(0,1).contiguous()
-    #     eeg_semantic_res = self.eeg_selfattn(eeg_semantic_res)
-    #     eeg_semantic_res = eeg_semantic_res.transpose(0,1).contiguous()
-    #     eeg_vq = self.cross_quantizer.vq_embedding(eeg_semantic_res)
-    #     return eeg_vq,eeg_semantic_res        
+    def EEGVQEncoder(self,eeg_feat:torch.Tensor):
+        # eeg_feat = eeg_feat.cuda()
+        eeg_semantic_res = eeg_feat.transpose(0,1).contiguous()
+        eeg_semantic_res = self.eeg_selfattn(eeg_semantic_res)
+        eeg_semantic_res = eeg_semantic_res.transpose(0,1).contiguous()
+        eeg_vq = self.cross_quantizer.vq_embedding(eeg_semantic_res)
+        return eeg_vq#,eeg_semantic_res        
 
     # def vq_forward(self,audio_feat:torch.Tensor,eeg_feat:torch.Tensor):
     #     eeg_vq,eeg_semantic_res = self.EEGVQEncoder(eeg_feat)
@@ -256,33 +256,33 @@ class VQVAEEncoder(nn.Module):
         eeg_semantic_res = self.eeg_selfattn(eeg_semantic_res)
         eeg_semantic_res = eeg_semantic_res.transpose(0,1).contiguous()
 
-        audio_semantic_res = audio_feat.transpose(0,1).contiguous()
-        audio_semantic_res = self.audio_selfattn(audio_semantic_res)
-        audio_semantic_res = audio_semantic_res.transpose(0,1).contiguous()
+        mel_semantic_res = audio_feat.transpose(0,1).contiguous()
+        mel_semantic_res = self.mel_selfattn(mel_semantic_res)
+        mel_semantic_res = mel_semantic_res.transpose(0,1).contiguous()
 
         eeg_encoder_res = self.eeg_encoder(eeg_feat)
-        audio_encoder_res = self.audio_encoder(audio_feat)
+        mel_encoder_res = self.mel_encoder(audio_feat)
 
-        audio_vq,eeg_vq,audio_embedding_loss,eeg_embedding_loss,audio_perplexity,eeg_perplexity,cmcm_loss,equal_num \
-            = self.cross_quantizer(audio_semantic_res,eeg_semantic_res)
+        mel_vq,eeg_vq,mel_embedding_loss,eeg_embedding_loss,mel_perplexity,eeg_perplexity,cmcm_loss,equal_num \
+            = self.cross_quantizer(mel_semantic_res,eeg_semantic_res)
         
-        return  audio_semantic_res,eeg_semantic_res,audio_encoder_res,eeg_encoder_res,\
-                audio_vq,eeg_vq,audio_embedding_loss,eeg_embedding_loss,cmcm_loss,equal_num
+        return  mel_semantic_res,eeg_semantic_res,mel_encoder_res,eeg_encoder_res,\
+                mel_vq,eeg_vq,mel_embedding_loss,eeg_embedding_loss,cmcm_loss,equal_num
     
-    class VQVAEDecoder(nn.Module):
-        def __init__(self,audio_dim:int,eeg_dim:int,audio_output_dim:int,eeg_output_dim:int,embedding_dim:int,class_num:int) -> None:
-            super().__init__()
-            self.audio_decoder = FeatDecoder(audio_output_dim,audio_dim,embedding_dim)
-            self.eeg_decoder = FeatDecoder(eeg_output_dim,eeg_dim,embedding_dim)
-            self.audio_semantic_decoder = SemanticDecoder(embedding_dim,class_num)
-            self.eeg_semantic_decoder = SemanticDecoder(embedding_dim,class_num)
+class VQVAEDecoder(nn.Module):
+    def __init__(self,mel_dim:int,eeg_dim:int,mel_output_dim:int,eeg_output_dim:int,embedding_dim:int,class_num:int=141) -> None:
+        super().__init__()
+        self.mel_decoder = FeatDecoder(mel_output_dim,mel_dim,embedding_dim)
+        self.eeg_decoder = FeatDecoder(eeg_output_dim,eeg_dim,embedding_dim)
+        # self.audio_semantic_decoder = SemanticDecoder(embedding_dim,class_num)
+        # self.eeg_semantic_decoder = SemanticDecoder(embedding_dim,class_num)
 
-        def forward(self,audio_feat:torch.Tensor,eeg_feat:torch.Tensor,audio_encoder_res:torch.Tensor,eeg_encoder_res:torch.Tensor,audio_vq:torch.Tensor,eeg_vq:torch.Tensor):
-            audio_recon_res = self.audio_decoder(audio_encoder_res,audio_vq)
-            eeg_recon_res = self.eeg_decoder(eeg_encoder_res,eeg_vq)
-            audio_recon_loss = F.mse_loss(audio_recon_res,audio_feat)
-            eeg_recon_loss = F.mse_loss(eeg_recon_res,eeg_feat)
-            audio_class = self.audio_semantic_decoder(audio_vq)
-            eeg_class = self.eeg_semantic_decoder(eeg_vq)
+    def forward(self,mel_feat:torch.Tensor,eeg_feat:torch.Tensor,mel_encoder_res:torch.Tensor,eeg_encoder_res:torch.Tensor,mel_vq:torch.Tensor,eeg_vq:torch.Tensor):
+        mel_recon_res = self.mel_decoder(mel_encoder_res,mel_vq)
+        eeg_recon_res = self.eeg_decoder(eeg_encoder_res,eeg_vq)
+        audio_recon_loss = F.mse_loss(mel_recon_res,mel_feat)
+        eeg_recon_loss = F.mse_loss(eeg_recon_res,eeg_feat)
+        # audio_class = self.audio_semantic_decoder(audio_vq)
+        # eeg_class = self.eeg_semantic_decoder(eeg_vq)
 
-            return audio_recon_loss,eeg_recon_loss,audio_class,eeg_class
+        return audio_recon_loss,eeg_recon_loss#,audio_class,eeg_class
