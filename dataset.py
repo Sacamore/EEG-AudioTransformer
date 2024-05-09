@@ -42,32 +42,34 @@ class EEGAudioDataset():
         sos = scipy.signal.iirfilter(4, [148/(sr/2),152/(sr/2)],btype='bandstop',output='sos')
         data = scipy.signal.sosfiltfilt(sos,data,axis=0)
 
-        hg = np.abs(hilbert3(data))
-        feat = np.zeros((numWindows,data.shape[1]*2))
-        hg = np.pad(hg,((int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),(0,0)),mode=pad_mode)
+        # hg = np.abs(hilbert3(data))
+        feat = np.zeros((numWindows,data.shape[1]))
+        # hg = np.pad(hg,((int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),(0,0)),mode=pad_mode)
         data = np.pad(data,((int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),(0,0)),mode=pad_mode)
         for win in range(numWindows):
             start= int(np.floor((win*frameshift)*sr))
             stop = int(np.floor(start+windowLength*sr))
             if stop > data.shape[0]:
                 stop = data.shape[0]
-            # feat[win,:] = np.mean(data[start:stop,:],axis=0)
-            feat[win,:] = np.concatenate((np.mean(data[start:stop,:],axis=0),np.mean(hg[start:stop,:],axis=0)),axis=0)
+            feat[win,:] = np.mean(data[start:stop,:],axis=0)
+            # feat[win,:] = np.concatenate((np.mean(data[start:stop,:],axis=0),np.mean(hg[start:stop,:],axis=0)),axis=0)
         return feat
 
     @staticmethod
     def extractMelSpecs(audio, sr, windowLength=0.025, frameshift=0.005,pad_mode = 'constant'):
         # align to hifigan
         audio = librosa.util.normalize(audio/32767) * 0.95
-        audio = np.pad(audio.astype('float'),(int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),mode='linear_ramp')
+        audio = np.pad(audio.astype('double'),(int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),mode='reflect')
         spectrogram = librosa.feature.melspectrogram(y=audio,sr=sr,n_fft=int(windowLength*sr),hop_length=int(frameshift*sr),center=False,n_mels=40)
+        # spectrogram = np.log(spectrogram)
         spectrogram = np.log(np.clip(spectrogram,a_min=1e-5,a_max=None))
-        rms = librosa.feature.rms(y=audio,frame_length=int(windowLength*sr),hop_length=int(frameshift*sr),center=False)
-        rms = (rms - np.mean(rms))/np.std(rms)
+        # rms = librosa.feature.rms(y=audio,frame_length=int(windowLength*sr),hop_length=int(frameshift*sr),center=False)
+        # rms = (rms - np.mean(rms))/np.std(rms)
         # zcr = librosa.feature.zero_crossing_rate(y=audio,frame_length=int(windowLength*sr),hop_length=int(frameshift*sr),center=False)
         # zcr = (zcr - np.mean(zcr))/np.std(zcr)
-        feat = np.concatenate((spectrogram.T,rms.T),axis=1)
-        return feat
+        # feat = np.concatenate((spectrogram.T,rms.T),axis=1)
+        # return feat
+        return spectrogram.T
 
 
     def loadData(self):

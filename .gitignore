@@ -3,5 +3,6 @@
 /test_mel_files
 /logs
 /.vscode
+/model/__pycache__
 tensorboard.sh
 nohup.out

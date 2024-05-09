@@ -34,7 +34,7 @@ class MultiHeadAttention(nn.Module):
 
         self.output = nn.Linear(d_model,d_model)
 
-        self.dropout = nn.Dropout(dropout,inplace=True)
+        self.dropout = nn.Dropout(dropout)
         
         self.scale = 1/np.sqrt(self.d_k)
 
@@ -160,7 +160,7 @@ class FeedForward(nn.Module):
         self.layer1 = nn.Linear(d_model,d_ff,bias1)
         self.layer2 = nn.Linear(d_ff,d_model,bias2)
 
-        self.dropout = nn.Dropout(dropout,inplace=True)
+        self.dropout = nn.Dropout(dropout)
 
         self.activation = activation
 
@@ -210,7 +210,7 @@ class TransformerLayer(nn.Module):
         self.self_attn = self_attn
         self.src_attn = src_attn
         self.feed_forward = feed_forward
-        self.dropout = nn.Dropout(dropout,inplace=True)
+        self.dropout = nn.Dropout(dropout)
         self.norm_self_attn = nn.LayerNorm([d_model])
         if self.src_attn is not None:
             self.norm_src_attn = nn.LayerNorm([d_model])

@@ -137,7 +137,7 @@ def train(argu):
         writer = SummaryWriter(f'./logs/{pt}/{model_name}')
 
         for e in range(start_epoch,end_epoch):
-            models = [vqvae_encoder,cpc,mel_mi_net,eeg_mi_net,vqvae_decoder,test_outputs]
+            models = [vqvae_encoder,cpc,mel_mi_net,eeg_mi_net,vqvae_decoder,mel_vq_decoder]
             to_train(models)
             aver_main_loss = 0
             aver_decoder_loss = 0
@@ -147,18 +147,18 @@ def train(argu):
                 main_optimizer.zero_grad()
                 mel_vq_decoder_optimizer.zero_grad()
                 eeg = eeg.to(device)
-                eeg = eeg.type(tensor_type)
+                eeg = eeg.type(tensor_type) # [B,T,EEG_D]
                 mel = mel.to(device)
-                mel = mel.type(tensor_type)
+                mel = mel.type(tensor_type) # [B,T,MEL_D]
 
                 for _ in range(mi_iter):
                     eeg_mi_net_optimizer.zero_grad()
                     mel_mi_net_optimizer.zero_grad()
                     _,_,mel_encoder_res,eeg_encoder_res,mel_vq,eeg_vq,_,_,_,_ = vqvae_encoder(mel,eeg)
-                    mel_encoder_res = mel_encoder_res.detach()
-                    eeg_encoder_res = eeg_encoder_res.detach()
-                    mel_vq = mel_vq.detach()
-                    eeg_vq = eeg_vq.detach()
+                    mel_encoder_res = mel_encoder_res.detach() # [B,T,EMB_D]
+                    eeg_encoder_res = eeg_encoder_res.detach() # [B,T,EMB_D]
+                    mel_vq = mel_vq.detach() # [B,T,EMB_D]
+                    eeg_vq = eeg_vq.detach() # [B,T,EMB_D]
 
                     lld_mel_loss = -mel_mi_net.loglikeli(mel_vq,mel_encoder_res)
                     lld_mel_loss.backward()
@@ -183,8 +183,8 @@ def train(argu):
 
                 with torch.no_grad():
                     eeg_vq = vqvae_encoder.EEGVQEncoder(eeg)
-                test_outputs = mel_vq_decoder(eeg_vq)
-                mel_vq_decode_loss = loss_fn(test_outputs,mel)
+                mel_outputs = mel_vq_decoder(eeg_vq)
+                mel_vq_decode_loss = loss_fn(mel_outputs,mel)
                 mel_vq_decode_loss.backward()
                 mel_vq_decoder_optimizer.step()
 
@@ -196,7 +196,10 @@ def train(argu):
 
             scheduler.step()
 
-            if e %argu.save_interval == 0:
+            if e!=0 and e%argu.save_interval == 0:
+                save_path = f'{argu.save_model_dir}/{pt}/{model_name}'
+                if os.path.exists(save_path) == False:
+                    os.mkdir(save_path)
                 state_dict = {
                     'vqvae_encoder':vqvae_encoder.state_dict(),
                     'cpc':cpc.state_dict(),
@@ -210,8 +213,8 @@ def train(argu):
                     'mel_vq_decoder_optimizer':mel_vq_decoder_optimizer.state_dict(),
                     'epoch':e
                 }
-                save_path = f'{argu.save_model_dir}/{pt}/{model_name}/{model_name}_{end_epoch:06}.pt'
-                torch.save(state_dict,save_path)
+                # save_path = f'{argu.save_model_dir}/{pt}/{model_name}/{model_name}_{e:06}.pt'
+                torch.save(state_dict,os.path.join(save_path,f'{model_name}_{e:06}.pt'))
 
             # TODO: add audio, figure by epoch to tensorboard
             if e % argu.summary_interval == 0:
@@ -230,7 +233,7 @@ def train(argu):
                 
                 writer.add_scalar(f'test loss',test_loss,e)
 
-                model_mfcc = utils.toMFCC(test_outputs[:,:40].detach().cpu().numpy())
+                model_mfcc = utils.toMFCC(test_outputs[:,-1,:40].detach().cpu().numpy())
                 eu_dis = 0
                 for i in range(test_mfcc.shape[0]):
                     eu_dis += np.linalg.norm(model_mfcc[i] - test_mfcc[i])
@@ -239,8 +242,8 @@ def train(argu):
                 if e%argu.graph_interval == 0:
                     if e == 0:
                         writer.add_figure('origin melspec',utils.plot_spectrogram(test_label[:,-1,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
-                    writer.add_figure('test melspec',utils.plot_spectrogram(test_outputs[:,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
-                    writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
+                    writer.add_figure('test melspec',utils.plot_spectrogram(test_outputs[:,-1,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
+                    # writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,-1,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
         
         writer.close()
 
@@ -251,7 +254,7 @@ def parseCommand():
 
     parser.add_argument('--config',default='',type=str)
     parser.add_argument('--epoch',default=None,type=int)
-    parser.add_argument('--use_gpu_num',default='2',type=str)
+    parser.add_argument('--use_gpu_num',default='0',type=str)
     parser.add_argument('--input_data_dir',default='./feat',type=str)
     parser.add_argument('--save_model_dir',default='./res',type=str)
     parser.add_argument('--seed',default=2024,type=int)
