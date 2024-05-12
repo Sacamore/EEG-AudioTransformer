@@ -1,0 +1,30 @@
+{
+    "model_name":"cmg_n2000_no_position_embedding",
+    "model_type":"cmg",
+    "model_config":{
+        "seg_size":16,
+        "pred_size":1,
+        "batch_size":512,
+        "epochs":300,
+        "lr":4e-5,
+        "b1":0.5,
+        "b2":0.999,
+        "clip_grad":0.5,
+        "hidden_dim":256,
+        "d_model":128,
+        "n_embedding":2000,
+        "mi_iter":10,
+        "nhead":2,
+        "n_layer":2,
+        "loss":"L1Loss",
+        "optimizer":"Adam"
+    },
+    "data_config":{
+        "data_path":"./feat/words",
+        "eeg_sr":1024,
+        "audio_sr":16000,
+        "win_len":0.025,
+        "frame_shift":0.005,
+        "pad_mode":"linear_ramp"
+    }
+}

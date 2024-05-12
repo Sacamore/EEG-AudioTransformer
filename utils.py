@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 def toMFCC(logMel):
-    return scipy.fftpack.dct(logMel,type=2,axis=1,norm='ortho')[:,:13]
+    return scipy.fftpack.dct(logMel,type=2,axis=-1,norm='ortho')[:,:13]
 
 def load_checkpoint(filepath):
     assert os.path.isfile(filepath)

@@ -13,6 +13,7 @@ class TransformerEncoder(nn.Module):
         super().__init__()
         self.aff_input = nn.Linear(input_dim,d_model)
         self.RoPEMultiHeadAttention = transformer.RotaryPEMultiHeadAttention(heads=nhead,d_model=d_model,rope_percentage=1.0,dropout=dropout)
+        # self.MultiHeadAttention = transformer.MultiHeadAttention(heads=nhead,d_model=d_model,dropout=dropout)
         self.ff = transformer.ConvFeedForward(d_model=d_model,d_ff=4*d_model,activation=nn.GELU(),dropout=dropout)
         self.encoderLayer = transformer.TransformerLayer(d_model=d_model,self_attn=self.RoPEMultiHeadAttention,feed_forward=self.ff,dropout=dropout)
         self.encoder = transformer.Encoder(self.encoderLayer,n_layers=n_layer)
@@ -51,12 +52,14 @@ class ResidualStack(nn.Module):
 class SemanticDecoder(nn.Module):
     def __init__(self, input_dim:int , output_dim: int) -> None:
         super().__init__()
-        self.aff_input = nn.Linear(input_dim,input_dim)
-        self.output = nn.Linear(input_dim,output_dim)
+        self.linear = nn.Sequential(nn.Linear(input_dim,input_dim//2),
+                                    nn.LeakyReLU(),
+                                    nn.Linear(input_dim//2,input_dim//2),
+                                    nn.LeakyReLU(),
+                                    nn.Linear(input_dim//2,output_dim))
     
     def forward(self,input_vq:torch.Tensor):
-        feat = self.aff_input(input_vq)
-        res = self.output(feat)
+        res = self.linear(input_vq)
         return res
     
 class FeatEncoder(nn.Module):
@@ -187,18 +190,19 @@ class CrossVQEmbeddingEMA(nn.Module):
         for index in e_indices:
             self.unactivated_count[index.item()] = 0
 
-        activated_indices = []
+        # activated_indices = []
         unactivated_indices = []
         for i,x in enumerate(self.unactivated_count):
             if x > 300:
                 unactivated_indices.append(i)
                 self.unactivated_count[i] = 0
-            elif x >= 0 and x < 100:
-                activated_indices.append(i)
+            # elif x >= 0 and x < 100:
+            #     activated_indices.append(i)
 
-        activated_quantized = F.embedding(torch.tensor(activated_indices,dtype=torch.long).cuda(),self.embedding) # [?,D]
+        # activated_quantized = F.embedding(torch.tensor(activated_indices,dtype=torch.long).cuda(),self.embedding) # [?,D]
         for i in unactivated_indices:
-            self.embedding[i] = activated_quantized[random.randint(0,len(activated_indices)-1)] + torch.Tensor(self.embedding_dim).uniform_(-1/1024,1/1024).cuda()
+            self.embedding[i] = torch.Tensor(self.embedding_dim).uniform_(-1/400,1/400).cuda()
+            # self.embedding[i] = activated_quantized[random.randint(0,len(activated_indices)-1)] + torch.Tensor(self.embedding_dim).uniform_(-1/1024,1/1024).cuda()
         
         cmcm_loss = 0.5 * Lcmcm
 

@@ -88,41 +88,27 @@ def train(argu):
 
 
         vqvae_encoder = VQVAEEncoder(mel_dim=output_dim,eeg_dim=input_dim,mel_output_dim=d_model,eeg_output_dim=d_model,n_embedding=n_embedding,embedding_dim=d_model).to(device)
-        cpc = Cross_CPC(embedding_dim=d_model,hidden_dim=hidden_dim,context_dim=hidden_dim,num_layers=n_layer,predict_step=pred_size).to(device)
-        mel_mi_net = CLUBSample_group(x_dim=d_model,y_dim=d_model,hidden_size=hidden_dim).to(device)
-        eeg_mi_net = CLUBSample_group(x_dim=d_model,y_dim=d_model,hidden_size=hidden_dim).to(device)
-        vqvae_decoder = VQVAEDecoder(mel_dim=output_dim,eeg_dim=input_dim,mel_output_dim=d_model,eeg_output_dim=d_model,embedding_dim=d_model).to(device)
         mel_vq_decoder = SemanticDecoder(input_dim=d_model,output_dim=output_dim).to(device)
 
-        main_optimizer = torch.optim.Adam(chain(vqvae_encoder.parameters(),cpc.parameters(),vqvae_decoder.parameters()),lr=lr,betas=(b1,b2))
-        mel_mi_net_optimizer = torch.optim.Adam(mel_mi_net.parameters(),lr=lr,betas=(b1,b2))
-        eeg_mi_net_optimizer = torch.optim.Adam(eeg_mi_net.parameters(),lr=lr,betas=(b1,b2))
-        mel_vq_decoder_optimizer = torch.optim.Adam(mel_vq_decoder.parameters(),lr=lr,betas=(b1,b2))
+        main_optimizer = torch.optim.Adam(chain(vqvae_encoder.parameters(),mel_vq_decoder.parameters()),lr=lr,betas=(b1,b2))
         scheduler = MultiStepLR(main_optimizer,milestones=[10,20,30],gamma=0.5)
 
         criterion = nn.MSELoss().to(device)
         loss_fn = lambda x,y:(criterion(x, y)+criterion(torch.exp(x),torch.exp(y))+criterion(dct(x,norm='ortho'),dct(y,norm='ortho')))
 
         start_epoch = 0
-        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',model_name)
-
+        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',f'{model_name}_downstream')
         if checkpoint is not None:
             state_dict = utils.load_checkpoint(checkpoint)
-            start_epoch = state_dict['epoch']
-            if start_epoch > end_epoch:
-                raise Exception(f'Already got a {model_name} model trained by {end_epoch} rather then {start_epoch}')
-            # if operator.eq(state_dict.model_cfg,model_cfg) == False:
-            #     raise Exception(f'{model_name} model')
             vqvae_encoder.load_state_dict(state_dict['vqvae_encoder'])
-            cpc.load_state_dict(state_dict['cpc'])
-            mel_mi_net.load_state_dict(state_dict['mel_mi_net'])
-            eeg_mi_net.load_state_dict(state_dict['eeg_mi_net'])
-            vqvae_decoder.load_state_dict(state_dict['vqvae_decoder'])
             mel_vq_decoder.load_state_dict(state_dict['mel_vq_decoder'])
             main_optimizer.load_state_dict(state_dict['main_optimizer'])
-            mel_mi_net_optimizer.load_state_dict(state_dict['mel_mi_net_optimizer'])
-            eeg_mi_net_optimizer.load_state_dict(state_dict['eeg_mi_net_optimizer'])
-            mel_vq_decoder_optimizer.load_state_dict(state_dict['mel_vq_decoder_optimizer'])
+            start_epoch = state_dict['epoch']
+        else:
+            checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',model_name)
+            if checkpoint is not None:
+                state_dict = utils.load_checkpoint(checkpoint)
+                vqvae_encoder.load_state_dict(state_dict['vqvae_encoder'])
             
         
         train_data = torch.from_numpy(train_data)
@@ -135,65 +121,31 @@ def train(argu):
         train_dataloader = DataLoader(dataset=train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True)
         # test_dataloader = DataLoader(dataset=test_dataset,batch_size=batch_size,shuffle=False,pin_memory=True)
 
-        writer = SummaryWriter(f'./logs/{pt}/{model_name}')
+        writer = SummaryWriter(f'./logs/{pt}/{model_name}_downstream')
 
         for e in range(start_epoch,end_epoch):
-            models = [vqvae_encoder,cpc,mel_mi_net,eeg_mi_net,vqvae_decoder,mel_vq_decoder]
+            models = [vqvae_encoder,mel_vq_decoder]
             to_train(models)
-            aver_main_loss = 0
-            aver_decoder_loss = 0
+            aver_loss = 0
             # aver_mi_mel_loss = 0
             # aver_mi_eeg_loss = 0
             for _, (eeg, mel) in enumerate(train_dataloader):
                 main_optimizer.zero_grad()
-                mel_vq_decoder_optimizer.zero_grad()
                 eeg = eeg.to(device)
                 eeg = eeg.type(tensor_type) # [B,T,EEG_D]
                 mel = mel.to(device)
                 mel = mel.type(tensor_type) # [B,T,MEL_D]
 
-                for _ in range(mi_iter):
-                    eeg_mi_net_optimizer.zero_grad()
-                    mel_mi_net_optimizer.zero_grad()
-                    _,_,mel_encoder_res,eeg_encoder_res,mel_vq,eeg_vq,_,_,_,_ = vqvae_encoder(mel,eeg)
-                    mel_encoder_res = mel_encoder_res.detach() # [B,T,EMB_D]
-                    eeg_encoder_res = eeg_encoder_res.detach() # [B,T,EMB_D]
-                    mel_vq = mel_vq.detach() # [B,T,EMB_D]
-                    eeg_vq = eeg_vq.detach() # [B,T,EMB_D]
 
-                    lld_mel_loss = -mel_mi_net.loglikeli(mel_vq,mel_encoder_res)
-                    lld_mel_loss.backward()
-                    mel_mi_net_optimizer.step()
-
-                    lld_eeg_loss = -eeg_mi_net.loglikeli(eeg_vq,eeg_encoder_res)
-                    lld_eeg_loss.backward()
-                    eeg_mi_net_optimizer.step()
-
-                mel_semantic_res,eeg_semantic_res,mel_encoder_res,eeg_encoder_res,mel_vq,eeg_vq,mel_embedding_loss,eeg_embedding_loss,cmcm_loss,equal_num =vqvae_encoder(mel,eeg)
-                mi_mel_loss = mel_mi_net.mi_est(mel_vq,mel_encoder_res)
-                mi_eeg_loss = eeg_mi_net.mi_est(eeg_vq,eeg_encoder_res)
-                # aa_accuracy,ee_accuracy,ae_accuracy,ea_accuracy,cpc_loss = cpc(mel_semantic_res,eeg_semantic_res)
-                cpc_loss = cpc(mel_semantic_res,eeg_semantic_res)
-                mel_recon_loss,eeg_recon_loss = vqvae_decoder(mel,eeg,mel_encoder_res,eeg_encoder_res,mel_vq,eeg_vq)
-                
-                main_loss = mel_recon_loss + eeg_recon_loss + mel_embedding_loss + eeg_embedding_loss + mi_mel_loss + mi_eeg_loss + cpc_loss + cmcm_loss
-                mel_outputs = mel_vq_decoder(eeg_vq.detach())
-                mel_vq_decode_loss = loss_fn(mel_outputs,mel)
-                mel_vq_decode_loss.backward()
-                main_loss.backward()
+                # with torch.no_grad():
+                eeg_vq = vqvae_encoder.EEGVQEncoder(eeg)
+                mel_outputs = mel_vq_decoder(eeg_vq)
+                loss = loss_fn(mel_outputs,mel)
+                loss.backward()
                 for model in models:
                     nn.utils.clip_grad_norm_(model.parameters(),clip_grad)
                 main_optimizer.step()
-
-                # with torch.no_grad():
-                #     eeg_vq = vqvae_encoder.EEGVQEncoder(eeg)
-                # mel_outputs = mel_vq_decoder(eeg_vq.detach())
-                # mel_vq_decode_loss = loss_fn(mel_outputs,mel)
-                # mel_vq_decode_loss.backward()
-                mel_vq_decoder_optimizer.step()
-
-                aver_main_loss += main_loss
-                aver_decoder_loss += mel_vq_decode_loss
+                aver_loss += loss
                 # aver_mi_mel_loss += mi_mel_loss
                 # aver_mi_eeg_loss += mi_eeg_loss
 
@@ -206,19 +158,12 @@ def train(argu):
                     os.mkdir(save_path)
                 state_dict = {
                     'vqvae_encoder':vqvae_encoder.state_dict(),
-                    'cpc':cpc.state_dict(),
-                    'mel_mi_net':mel_mi_net.state_dict(),
-                    'eeg_mi_net':eeg_mi_net.state_dict(),
-                    'vqvae_decoder':vqvae_decoder.state_dict(),
                     'mel_vq_decoder':mel_vq_decoder.state_dict(),
                     'main_optimizer':main_optimizer.state_dict(),
-                    'mel_mi_net_optimizer':mel_mi_net_optimizer.state_dict(),
-                    'eeg_mi_net_optimizer':eeg_mi_net_optimizer.state_dict(),
-                    'mel_vq_decoder_optimizer':mel_vq_decoder_optimizer.state_dict(),
                     'epoch':e
                 }
                 # save_path = f'{argu.save_model_dir}/{pt}/{model_name}/{model_name}_{e:06}.pt'
-                torch.save(state_dict,os.path.join(save_path,f'{model_name}_{e:06}.pt'))
+                torch.save(state_dict,os.path.join(save_path,f'{model_name}_downstream_{e:06}.pt'))
 
             # TODO: add audio, figure by epoch to tensorboard
             if e % argu.summary_interval == 0:
@@ -229,12 +174,9 @@ def train(argu):
                 test_loss = loss_fn(test_outputs,test_label).detach().cpu().numpy()
                 # test_outputs = torch.clamp(test_outputs,min=np.log(1e-5))
                 # test_loss = loss_fn(test_outputs,test_label).detach().cpu().numpy()
-                aver_main_loss = aver_main_loss/len(train_dataloader)
-                aver_decoder_loss = aver_decoder_loss/len(train_dataloader)
+                aver_loss = aver_loss/len(train_dataloader)
 
-                writer.add_scalar(f'train main loss',aver_main_loss,e)
-                writer.add_scalar(f'train decoder loss',aver_decoder_loss,e)
-                
+                writer.add_scalar(f'train loss',aver_loss,e)
                 writer.add_scalar(f'test loss',test_loss,e)
 
                 model_mfcc = utils.toMFCC(test_outputs[:,-1,:40].detach().cpu().numpy())
@@ -264,7 +206,7 @@ def parseCommand():
     parser.add_argument('--seed',default=2024,type=int)
     parser.add_argument('--sub',default=None,type=int)
     parser.add_argument('--summary_interval',default=5,type=int)
-    parser.add_argument('--save_interval',default=50,type=int)
+    parser.add_argument('--save_interval',default=200,type=int)
     parser.add_argument('--graph_interval',default=50,type=int)
     # TODO: add argument to control print interval, summary interval, validate interval
 
