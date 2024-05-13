@@ -17,7 +17,7 @@ from tensorboardX import SummaryWriter
 
 from model.CLUB import CLUBSample_group
 from model.CPC import Cross_CPC
-from model.VQVAE import VQVAEEncoder,VQVAEDecoder,SemanticDecoder
+from model.CrossVQVAE import VQVAEEncoder,VQVAEDecoder,SemanticDecoder
 from dataset import EEGAudioDataset
 from torch_dct import dct
 
@@ -184,12 +184,6 @@ def train(argu):
                 for model in models:
                     nn.utils.clip_grad_norm_(model.parameters(),clip_grad)
                 main_optimizer.step()
-
-                # with torch.no_grad():
-                #     eeg_vq = vqvae_encoder.EEGVQEncoder(eeg)
-                # mel_outputs = mel_vq_decoder(eeg_vq.detach())
-                # mel_vq_decode_loss = loss_fn(mel_outputs,mel)
-                # mel_vq_decode_loss.backward()
                 mel_vq_decoder_optimizer.step()
 
                 aver_main_loss += main_loss

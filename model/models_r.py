@@ -11,7 +11,7 @@ from torch import Tensor
 
 from model.CLUB import CLUBSample_group
 from model.CPC import Cross_CPC
-from model.VQVAE import VQVAEEncoder,VQVAEDecoder
+from model.CrossVQVAE import VQVAEEncoder,VQVAEDecoder
 
 class model(nn.Module):
     def __init__(self,

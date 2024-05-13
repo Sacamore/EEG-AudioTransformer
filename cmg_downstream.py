@@ -17,7 +17,7 @@ from tensorboardX import SummaryWriter
 
 from model.CLUB import CLUBSample_group
 from model.CPC import Cross_CPC
-from model.VQVAE import VQVAEEncoder,VQVAEDecoder,SemanticDecoder
+from model.CrossVQVAE import VQVAEEncoder,VQVAEDecoder,SemanticDecoder
 from dataset import EEGAudioDataset
 from torch_dct import dct
 
