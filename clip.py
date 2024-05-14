@@ -89,8 +89,8 @@ def train(argu):
         vector_quantizer = VectorQuantizer(num_embeddings=n_embedding,embedding_dim=d_model).to(device)
         mel_decoder = MelDecoder(output_dim=output_dim,seg_size=seg_size,embedding_dim=d_model).to(device)
         
-        eeg_optimizer = torch.optim.Adam(chain(eeg_encoder.parameters(),clip.parameters()),lr=lr,betas=(b1,b2))
-        optimizer = torch.optim.Adam(chain(mel_encoder.parameters(),vector_quantizer.parameters(),mel_decoder.parameters()),lr=lr,betas=(b1,b2))
+        # eeg_optimizer = torch.optim.Adam(chain(eeg_encoder.parameters(),clip.parameters()),lr=lr,betas=(b1,b2))
+        optimizer = torch.optim.Adam(chain(mel_encoder.parameters(),eeg_encoder.parameters(),clip.parameters(),vector_quantizer.parameters(),mel_decoder.parameters()),lr=lr,betas=(b1,b2))
         scheduler = MultiStepLR(optimizer,milestones=[10,20,30],gamma=0.5)
 
         # cross_entrophy_loss = nn.CrossEntropyLoss().to(device)
@@ -111,7 +111,7 @@ def train(argu):
             mel_encoder.load_state_dict(state_dict['mel_encoder'])
             vector_quantizer.load_state_dict(state_dict['vector_quantizer'])
             mel_decoder.load_state_dict(state_dict['mel_decoder'])
-            eeg_optimizer.load_state_dict(state_dict['eeg_optimizer'])
+            # eeg_optimizer.load_state_dict(state_dict['eeg_optimizer'])
             optimizer.load_state_dict(state_dict['optimizer'])
 
             
@@ -138,26 +138,36 @@ def train(argu):
             # aver_mi_eeg_loss = 0
             for _, (eeg, mel) in enumerate(train_dataloader):
                 optimizer.zero_grad()
-                eeg_optimizer.zero_grad()
+                # eeg_optimizer.zero_grad()
                 eeg = eeg.to(device)
                 eeg = eeg.type(tensor_type) # [B,T,EEG_D]
                 mel = mel.to(device)
                 mel = mel.type(tensor_type) # [B,T,MEL_D]
+                
+                # shuffle_indices = torch.rand(batch_size,seg_size,device=device).argsort()
+
                 encoded_eeg = eeg_encoder(eeg)
                 encoded_mel = mel_encoder(mel)
-                clip_loss,_ = clip(encoded_eeg,encoded_mel.detach())
-                eeg_loss =  clip_loss + l1loss(encoded_eeg,encoded_mel.detach())
-                embed_loss,mel_vq = vector_quantizer(encoded_mel)
+
+                e_clip_loss,m_clip_loss = clip(encoded_eeg,encoded_mel)
+                # eeg_loss =  clip_loss + l1loss(encoded_eeg,encoded_mel.detach())
+                clip_loss = (e_clip_loss +m_clip_loss)/2
+
+                encoded = (encoded_mel + encoded_eeg)/2
+
+                embed_loss,mel_vq = vector_quantizer(encoded)
+
                 mel_decoded = mel_decoder(mel_vq)
-                mel_loss = loss_fn(mel_decoded,mel) + embed_loss
-                mel_loss.backward()
-                eeg_loss.backward()
+                mel_loss = loss_fn(mel_decoded,mel)
+                loss = mel_loss + embed_loss + clip_loss
+                loss.backward()
+                # eeg_loss.backward()
                 for model in models:
                     nn.utils.clip_grad_norm_(model.parameters(),clip_grad)
-                eeg_optimizer.step()
+                # eeg_optimizer.step()
                 optimizer.step()
                 aver_mel_loss += mel_loss.detach().cpu().numpy()
-                aver_clip_loss += eeg_loss.detach().cpu().numpy()
+                aver_clip_loss += clip_loss.detach().cpu().numpy()
                 with torch.no_grad():
                     vector_quantizer.eval()
                     _,eeg_vq = vector_quantizer(encoded_eeg)
@@ -180,7 +190,7 @@ def train(argu):
                     'mel_encoder':mel_encoder.state_dict(),
                     'vector_quantizer':vector_quantizer.state_dict(),
                     'mel_decoder':mel_decoder.state_dict(),
-                    'eeg_optimizer':eeg_optimizer.state_dict(),
+                    # 'eeg_optimizer':eeg_optimizer.state_dict(),
                     'optimizer':optimizer.state_dict(),
                     'epoch':e
                 }

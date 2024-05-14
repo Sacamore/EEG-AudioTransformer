@@ -5,7 +5,7 @@ import model.transformer as transformer
 import copy
 import numpy as np
 
-class TransformerEncoder(nn.Module):
+class RoPETransformerEncoder(nn.Module):
     def __init__(self,input_dim:int,d_model:int,nhead:int=4,n_layer:int=2,dropout:float=0.1) -> None:
         super().__init__()
         self.aff_input = nn.Linear(input_dim,d_model)
@@ -17,6 +17,20 @@ class TransformerEncoder(nn.Module):
         self.src_mask = None
     def forward(self,x:torch.Tensor):
         x = self.aff_input(x)
+        x = self.encoder(x,self.src_mask)
+        return x
+    
+class TransformerEncoder(nn.Module):
+    def __init__(self,d_model:int,nhead:int=4,n_layer:int=2,dropout:float=0.1) -> None:
+        super().__init__()
+        # self.aff_input = nn.Linear(input_dim,d_model)
+        self.MultiHeadAttention = transformer.MultiHeadAttention(heads=nhead,d_model=d_model,dropout=dropout)
+        # self.MultiHeadAttention = transformer.MultiHeadAttention(heads=nhead,d_model=d_model,dropout=dropout)
+        self.ff = transformer.FeedForward(d_model=d_model,d_ff=4*d_model,activation=nn.GELU(),dropout=dropout)
+        self.encoderLayer = transformer.TransformerLayer(d_model=d_model,self_attn=self.MultiHeadAttention,feed_forward=self.ff,dropout=dropout)
+        self.encoder = transformer.Encoder(self.encoderLayer,n_layers=n_layer)
+        self.src_mask = None
+    def forward(self,x:torch.Tensor):
         x = self.encoder(x,self.src_mask)
         return x
 
@@ -50,7 +64,7 @@ class ResidualStack(nn.Module):
 
 class VectorQuantizer(nn.Module):
     def __init__(self, num_embeddings, embedding_dim, commitment_cost:float = 0.25):
-        super(VectorQuantizer, self).__init__()
+        super().__init__()
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.commitment_cost = commitment_cost
@@ -112,11 +126,11 @@ class VectorQuantizer(nn.Module):
 
 class MelEncoder(nn.Module):
     def __init__(self, input_dim, seg_size, embedding_dim:int=1024):
-        super(MelEncoder, self).__init__()
+        super().__init__()
         assert embedding_dim%seg_size == 0
         self.d_model= embedding_dim // seg_size * 4
         self.flat_dim = self.d_model * seg_size
-        self.TransformerEncoder = TransformerEncoder(input_dim=input_dim,d_model=self.d_model)
+        self.TransformerEncoder = RoPETransformerEncoder(input_dim=input_dim,d_model=self.d_model)
         # self.linear =nn.Sequential(
         #     nn.Linear(self.flat_dim,self.flat_dim//2),
         #     nn.LeakyReLU(),
@@ -129,6 +143,57 @@ class MelEncoder(nn.Module):
         flat_encoded = transformer_encoded.view(-1,self.flat_dim)
         encoded = flat_encoded#self.linear(flat_encoded)
         return encoded
+
+class MaskMelEncoder(nn.Module):
+    def __init__(self, input_dim,d_model, seg_size):
+        super().__init__()
+        # assert embedding_dim%seg_size == 0
+        # self.d_model= embedding_dim // seg_size * 4
+        self.flat_dim = d_model * seg_size
+        self.aff = nn.Linear(input_dim,d_model)
+        self.TransformerEncoder = TransformerEncoder(d_model=d_model)
+
+    def forward(self, inputs:torch.Tensor,pe:torch.Tensor):
+        bs = inputs.shape[0]
+        aff = self.aff(inputs)
+        aff += pe
+        transformer_encoded = self.TransformerEncoder(aff)
+        # flat_encoded = transformer_encoded.view(bs,-1)
+        # encoded = flat_encoded#self.linear(flat_encoded)
+        return transformer_encoded
+    
+class MaskEEGEncoder(nn.Module):
+    def __init__(self, input_dim,d_model, seg_size):
+        super().__init__()
+        self.flat_dim = d_model * seg_size
+        self.aff = nn.Linear(input_dim,d_model)
+        self.TransformerEncoder = TransformerEncoder(d_model=d_model)
+
+    def forward(self, inputs:torch.Tensor,pe:torch.Tensor):
+        bs = inputs.shape[0]
+        aff = self.aff(inputs)
+        aff += pe
+        transformer_encoded = self.TransformerEncoder(aff)
+        # flat_encoded = transformer_encoded.view(bs,-1)
+        # encoded = flat_encoded#self.linear(flat_encoded)
+        return transformer_encoded
+
+class MaskMelDecoder(nn.Module):
+    def __init__(self,output_dim,d_model,seg_size) -> None:
+        super().__init__()
+        self.output_dim = output_dim
+        self.seg_size = seg_size
+        self.decoder = TransformerEncoder(d_model=d_model)
+        self.output_layer = nn.Sequential(
+            nn.Linear(d_model,2*d_model),
+            nn.LeakyReLU(),
+            nn.Linear(2*d_model,output_dim)
+        )
+    def forward(self,vq:torch.Tensor):
+        decoded = self.decoder(vq)
+        res = self.output_layer(decoded)
+        # decoded = flat_decoded.view(-1,self.seg_size,self.output_dim)
+        return res
 
 class MelDecoder(nn.Module):
     def __init__(self,output_dim,seg_size,embedding_dim) -> None:
@@ -149,18 +214,18 @@ class MelDecoder(nn.Module):
     
 class EEGEncoder(nn.Module):
     def __init__(self, input_dim, seg_size, embedding_dim:int=1024):
-        super(EEGEncoder, self).__init__()
+        super().__init__()
         assert embedding_dim%seg_size == 0
         self.d_model= embedding_dim // seg_size * 4
         self.flat_dim = self.d_model * seg_size
-        self.TransformerEncoder = TransformerEncoder(input_dim=input_dim,d_model=self.d_model)
+        self.TransformerEncoder = RoPETransformerEncoder(input_dim=input_dim,d_model=self.d_model)
 
     def forward(self, inputs:torch.Tensor):
         transformer_encoded = self.TransformerEncoder(inputs)
         flat_encoded = transformer_encoded.view(-1,self.flat_dim)
         encoded = flat_encoded
         return encoded
-    
+
 class CLIP(nn.Module):
     def __init__(self,batch_size) -> None:
         super().__init__()
@@ -169,9 +234,13 @@ class CLIP(nn.Module):
 
     def forward(self,encoded_eeg:torch.Tensor,encoded_mel:torch.Tensor):
         batch_size = encoded_eeg.shape[0]
+        encoded_eeg = encoded_eeg.reshape(batch_size,-1)
+        encoded_mel = encoded_mel.reshape(batch_size,-1)
         encoded_eeg = encoded_eeg / encoded_eeg.norm(dim=-1,keepdim=True)
         encoded_mel = encoded_mel / encoded_mel.norm(dim=-1,keepdim=True)
         logit_scale = self.logit_scale.exp()
         logits_eeg = logit_scale * torch.matmul(encoded_eeg,encoded_mel.T)
-        loss = F.cross_entropy(logits_eeg,self.label[:batch_size])
-        return loss
+        logits_mel = logits_eeg.T
+        e_loss = F.cross_entropy(logits_eeg,self.label[:batch_size])
+        m_loss = F.cross_entropy(logits_mel,self.label[:batch_size])
+        return e_loss,m_loss

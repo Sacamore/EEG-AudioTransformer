@@ -372,7 +372,7 @@ class CLIP(nn.Module):
     def dtype(self):
         return self.visual.conv1.weight.dtype
 
-    def encode_image(self, image):
+    def encode_image(self, image)->torch.Tensor:
         """
         Encode the image using the visual model.
         """

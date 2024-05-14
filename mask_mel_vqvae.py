@@ -15,7 +15,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 # import tqdm
 from tensorboardX import SummaryWriter
 
-from model.VQVAE import EEGEncoder,MelEncoder,VectorQuantizer,MelDecoder,CLIP
+from model.VQVAE import MaskEEGEncoder,MaskMelEncoder,VectorQuantizer,MaskMelDecoder,CLIP
 
 from dataset import EEGAudioDataset
 from torch_dct import dct
@@ -51,9 +51,11 @@ def train(argu):
     lr = model_cfg['lr']
     b1 = model_cfg['b1']
     b2 = model_cfg['b2']
+    mask_ratio = model_cfg['mask_ratio']
     clip_grad = model_cfg['clip_grad']
     hidden_dim = model_cfg['hidden_dim']
     d_model = model_cfg['d_model']
+    embedding_dim = model_cfg['embedding_dim']
     nhead = model_cfg['nhead']
     n_layer = model_cfg['n_layer']
     n_embedding = model_cfg['n_embedding']
@@ -83,14 +85,17 @@ def train(argu):
         input_dim = test_data.shape[-1]
         output_dim = test_label.shape[-1]
 
-        eeg_encoder = EEGEncoder(input_dim=input_dim,seg_size=seg_size,embedding_dim=d_model).to(device)
+        mel_pos_embed = nn.Embedding(seg_size,d_model).to(device)
+        eeg_pos_embed = nn.Embedding(seg_size,d_model).to(device)
+        mask_embed = nn.Parameter(torch.randn(d_model)).to(device)
+        eeg_encoder = MaskEEGEncoder(input_dim=input_dim,d_model=d_model,seg_size=seg_size).to(device)
         clip = CLIP(batch_size).to(device)
-        mel_encoder = MelEncoder(input_dim=output_dim,seg_size=seg_size,embedding_dim=d_model).to(device)
-        vector_quantizer = VectorQuantizer(num_embeddings=n_embedding,embedding_dim=d_model).to(device)
-        mel_decoder = MelDecoder(output_dim=output_dim,seg_size=seg_size,embedding_dim=d_model).to(device)
+        mel_encoder = MaskMelEncoder(input_dim=output_dim,d_model=d_model,seg_size=seg_size).to(device)
+        vector_quantizer = VectorQuantizer(num_embeddings=n_embedding,embedding_dim=embedding_dim).to(device)
+        mel_decoder = MaskMelDecoder(output_dim=output_dim,d_model=d_model,seg_size=seg_size).to(device)
         
-        eeg_optimizer = torch.optim.Adam(chain(eeg_encoder.parameters(),clip.parameters()),lr=lr,betas=(b1,b2))
-        optimizer = torch.optim.Adam(chain(mel_encoder.parameters(),vector_quantizer.parameters(),mel_decoder.parameters()),lr=lr,betas=(b1,b2))
+        eeg_optimizer = torch.optim.Adam(chain(eeg_pos_embed.parameters(),eeg_encoder.parameters(),clip.parameters()),lr=lr,betas=(b1,b2))
+        optimizer = torch.optim.Adam(chain(mel_pos_embed.parameters(),mel_encoder.parameters(),vector_quantizer.parameters(),mel_decoder.parameters()),lr=lr,betas=(b1,b2))
         scheduler = MultiStepLR(optimizer,milestones=[10,20,30],gamma=0.5)
 
         # cross_entrophy_loss = nn.CrossEntropyLoss().to(device)
@@ -106,6 +111,9 @@ def train(argu):
                 raise Exception(f'Already got a {model_name} model trained by {end_epoch} rather then {start_epoch}')
             # if operator.eq(state_dict.model_cfg,model_cfg) == False:
             #     raise Exception(f'{model_name} model')
+            mel_pos_embed.load_state_dict(state_dict['mel_pos_embed'])
+            eeg_pos_embed.load_state_dict(state_dict['eeg_pos_embed'])
+            # mask_embed.load_state_dict(state_dict['mask_embed'])
             eeg_encoder.load_state_dict(state_dict['eeg_encoder'])
             clip.load_state_dict(state_dict['clip'])
             mel_encoder.load_state_dict(state_dict['mel_encoder'])
@@ -129,7 +137,7 @@ def train(argu):
         writer = SummaryWriter(f'./logs/{pt}/{model_name}')
 
         for e in range(start_epoch,end_epoch):
-            models = [eeg_encoder,mel_encoder,clip,vector_quantizer,mel_decoder]
+            models = [mel_pos_embed,eeg_pos_embed,eeg_encoder,mel_encoder,clip,vector_quantizer,mel_decoder]
             to_train(models)
             aver_mel_loss = 0
             aver_clip_loss = 0
@@ -143,13 +151,40 @@ def train(argu):
                 eeg = eeg.type(tensor_type) # [B,T,EEG_D]
                 mel = mel.to(device)
                 mel = mel.type(tensor_type) # [B,T,MEL_D]
-                encoded_eeg = eeg_encoder(eeg)
-                encoded_mel = mel_encoder(mel)
-                clip_loss,_ = clip(encoded_eeg,encoded_mel.detach())
-                eeg_loss =  clip_loss + l1loss(encoded_eeg,encoded_mel.detach())
-                embed_loss,mel_vq = vector_quantizer(encoded_mel)
-                mel_decoded = mel_decoder(mel_vq)
-                mel_loss = loss_fn(mel_decoded,mel) + embed_loss
+
+                bs = eeg.shape[0]
+                n_masked = int(seg_size*mask_ratio)
+                shuffle_indices = torch.rand(bs,seg_size,device=device).argsort()
+                masked_ind,unmasked_ind = shuffle_indices[:,:n_masked],shuffle_indices[:,n_masked:]
+                batch_ind = torch.arange(bs,device=device).unsqueeze(-1)
+
+                masked_eeg,unmasked_eeg = eeg[batch_ind,masked_ind],eeg[batch_ind,unmasked_ind]
+                masked_mel,unmasked_mel = mel[batch_ind,masked_ind],mel[batch_ind,unmasked_ind]
+
+                unmasked_mel_pos_embed = mel_pos_embed(unmasked_ind)
+                masked_mel_pos_embed = mel_pos_embed(masked_ind)
+
+                unmasked_eeg_pos_embed = eeg_pos_embed(unmasked_ind)
+                masked_eeg_pos_embed = eeg_pos_embed(masked_ind)
+
+                encoded_eeg_token = eeg_encoder(unmasked_eeg,unmasked_eeg_pos_embed)
+                encoded_mel_token = mel_encoder(unmasked_mel,unmasked_mel_pos_embed)
+                
+                eeg_clip_loss,mel_clip_loss = clip(encoded_eeg_token,encoded_mel_token.detach())
+                eeg_loss =  eeg_clip_loss + l1loss(encoded_eeg_token,encoded_mel_token.detach())
+
+                embed_loss,mel_vq = vector_quantizer(encoded_mel_token)
+
+                masked_mel_token = mask_embed[None,None,:].repeat(bs,n_masked,1)
+                masked_mel_token += masked_mel_pos_embed
+
+                concat_mel_token = torch.cat([masked_mel_token,mel_vq],dim=1)
+                dec_mel_input_tokens = torch.empty_like(concat_mel_token, device=device)
+                dec_mel_input_tokens[batch_ind, shuffle_indices] = concat_mel_token
+
+                mel_decoded = mel_decoder(dec_mel_input_tokens)
+                mel_loss = loss_fn(mel_decoded[batch_ind,masked_ind,:],masked_mel) + embed_loss
+                
                 mel_loss.backward()
                 eeg_loss.backward()
                 for model in models:
@@ -158,12 +193,22 @@ def train(argu):
                 optimizer.step()
                 aver_mel_loss += mel_loss.detach().cpu().numpy()
                 aver_clip_loss += eeg_loss.detach().cpu().numpy()
+
                 with torch.no_grad():
                     vector_quantizer.eval()
-                    _,eeg_vq = vector_quantizer(encoded_eeg)
+                    _,eeg_vq = vector_quantizer(encoded_eeg_token)
+                    
+                    masked_eeg_token = mask_embed[None,None,:].repeat(bs,n_masked,1)
+                    masked_eeg_token += masked_eeg_pos_embed
+
+                    concat_eeg_token = torch.cat([masked_eeg_token,eeg_vq],dim=1)
+                    dec_eeg_input_tokens = torch.empty_like(concat_eeg_token, device=device)
+                    dec_eeg_input_tokens[batch_ind, shuffle_indices] = concat_eeg_token
+
+                    eeg_decoded = mel_decoder(dec_eeg_input_tokens)
                     vector_quantizer.train()
-                    eeg_decoded = mel_decoder(eeg_vq)
                     aver_eeg_loss += loss_fn(eeg_decoded,mel)
+
 
                 # aver_mi_mel_loss += mi_mel_loss
                 # aver_mi_eeg_loss += mi_eeg_loss
@@ -175,6 +220,9 @@ def train(argu):
                 if os.path.exists(save_path) == False:
                     os.mkdir(save_path)
                 state_dict = {
+                    'mel_pos_embed':mel_pos_embed.state_dict(),
+                    'eeg_pos_embed':eeg_pos_embed.state_dict(),
+                    # 'mask_embed':mask_embed.state_dict(),
                     'eeg_encoder':eeg_encoder.state_dict(),
                     'clip':clip.state_dict(),
                     'mel_encoder':mel_encoder.state_dict(),
@@ -190,21 +238,57 @@ def train(argu):
             # TODO: add audio, figure by epoch to tensorboard
             if e % argu.summary_interval == 0:
                 to_eval(models)
-                encoded_mel = mel_encoder(test_label)
-                embed_loss,mel_vq = vector_quantizer(encoded_mel)
-                test_mel_outputs = mel_decoder(mel_vq)
-                test_mel_loss = (loss_fn(test_mel_outputs,test_label) + embed_loss).detach().cpu().numpy()
-                writer.add_scalar(f'test mel loss',test_mel_loss,e)
+                bs = test_data.shape[0]
+                n_masked = int(seg_size*mask_ratio)
+                shuffle_indices = torch.rand(bs,seg_size,device=device).argsort()
+                masked_ind,unmasked_ind = shuffle_indices[:,:n_masked],shuffle_indices[:,n_masked:]
+                batch_ind = torch.arange(bs,device=device).unsqueeze(-1)
+                # batch_ind = torch.arange(test_label.shape[0],device=device).unsqueeze(-1)
                 
-                encoded_eeg = eeg_encoder(test_data)
-                _,eeg_vq = vector_quantizer(encoded_eeg)
-                test_eeg_outputs = mel_decoder(eeg_vq)
-                test_eeg_loss = loss_fn(test_eeg_outputs,test_label).detach().cpu().numpy()
-                writer.add_scalar(f'test eeg loss',test_eeg_loss,e)
+                masked_eeg,unmasked_eeg = test_data[batch_ind,masked_ind],test_data[batch_ind,unmasked_ind]
+                masked_mel,unmasked_mel = test_label[batch_ind,masked_ind],test_label[batch_ind,unmasked_ind]
 
-                writer.add_scalar(f'train mel loss',aver_mel_loss/len(train_dataloader),e)
-                writer.add_scalar(f'train clip loss',aver_clip_loss/len(train_dataloader),e)
-                writer.add_scalar(f'train eeg loss',aver_eeg_loss/len(train_dataloader),e)
+                unmasked_mel_pos_embed = mel_pos_embed(unmasked_ind)
+                masked_mel_pos_embed = mel_pos_embed(masked_ind)
+
+                unmasked_eeg_pos_embed = eeg_pos_embed(unmasked_ind)
+                masked_eeg_pos_embed = eeg_pos_embed(masked_ind)
+
+                encoded_eeg_token = eeg_encoder(unmasked_eeg,unmasked_eeg_pos_embed)
+                encoded_mel_token = mel_encoder(unmasked_mel,unmasked_mel_pos_embed)
+                
+                # eeg_clip_loss,mel_clip_loss = clip(encoded_eeg_token,encoded_mel_token.detach())
+                # eeg_loss =  eeg_clip_loss + l1loss(encoded_eeg_token,encoded_mel_token.detach())
+
+                embed_loss,mel_vq = vector_quantizer(encoded_mel_token)
+                _,eeg_vq = vector_quantizer(encoded_eeg_token)
+
+                masked_mel_token = mask_embed[None,None,:].repeat(bs,n_masked,1)
+                masked_mel_token += masked_mel_pos_embed
+
+                concat_mel_token = torch.cat([masked_mel_token,mel_vq],dim=1)
+                dec_mel_input_tokens = torch.empty_like(concat_mel_token, device=device)
+                dec_mel_input_tokens[batch_ind, shuffle_indices] = concat_mel_token
+
+                test_mel_outputs = mel_decoder(dec_mel_input_tokens)
+                test_mel_loss = loss_fn(test_mel_outputs,test_label)
+                
+                masked_eeg_token = mask_embed[None,None,:].repeat(bs,n_masked,1)
+                masked_eeg_token += masked_eeg_pos_embed
+
+                concat_eeg_token = torch.cat([masked_eeg_token,eeg_vq],dim=1)
+                dec_eeg_input_tokens = torch.empty_like(concat_eeg_token, device=device)
+                dec_eeg_input_tokens[batch_ind, shuffle_indices] = concat_eeg_token
+
+                test_eeg_outputs = mel_decoder(dec_eeg_input_tokens)
+                test_eeg_loss = loss_fn(test_eeg_outputs,test_label)
+                
+                writer.add_scalar(f'test_loss/mel',test_mel_loss,e)
+                writer.add_scalar(f'test_loss/eeg',test_eeg_loss,e)
+
+                writer.add_scalar(f'train_loss/mel',aver_mel_loss/len(train_dataloader),e)
+                writer.add_scalar(f'train_loss/clip',aver_clip_loss/len(train_dataloader),e)
+                writer.add_scalar(f'train_loss/eeg',aver_eeg_loss/len(train_dataloader),e)
                 
 
                 test_mel_mfcc = utils.toMFCC(test_mel_outputs[:,-1,:40].detach().cpu().numpy())
@@ -216,21 +300,13 @@ def train(argu):
                     eeg_eu_dis += np.linalg.norm(test_eeg_mfcc[i] - test_mfcc[i])
                 mel_mcd = mel_eu_dis/test_mfcc.shape[0]
                 eeg_mcd = eeg_eu_dis/test_mfcc.shape[0]
-                writer.add_scalar(f'test mel mcd',mel_mcd,e)
-                writer.add_scalar(f'test eeg mcd',eeg_mcd,e)
+                writer.add_scalar(f'test_mcd/mel',mel_mcd,e)
+                writer.add_scalar(f'test_mcd/eeg',eeg_mcd,e)
                 if e%argu.graph_interval == 0:
                     if e == 0:
-                        # mel_fig = test_label[:,0,:].detach()
-                        # for i in range(1,seg_size):
-                        #     mel_fig += test_label[:,i,:].detach()
-                        # mel_fig = mel_fig/seg_size
-                        writer.add_figure('origin melspec',utils.plot_spectrogram(test_label[:,-1,:].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
-                    # mel_fig = test_outputs[:,0,:].detach()
-                    # for i in range(1,seg_size):
-                    #     mel_fig += test_outputs[:,i,:].detach()
-                    # mel_fig = mel_fig/seg_size
-                    writer.add_figure('test mel melspec',utils.plot_spectrogram(test_mel_outputs[:,-1,:].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
-                    writer.add_figure('test eeg melspec',utils.plot_spectrogram(test_eeg_outputs[:,-1,:].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
+                        writer.add_figure('melspec/origin',utils.plot_spectrogram(test_label[:,-1,:].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
+                    writer.add_figure('melspec/mel',utils.plot_spectrogram(test_mel_outputs[:,-1,:].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
+                    writer.add_figure('melspec/eeg',utils.plot_spectrogram(test_eeg_outputs[:,-1,:].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
                     
                     # writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,-1,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
         

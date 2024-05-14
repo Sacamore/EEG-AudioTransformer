@@ -7,6 +7,43 @@ import torch.utils.data as utils_data
 import torch.nn as nn
 import torch.nn.functional as F
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        
+        # 创建一个 max_len x d_model 的矩阵 P
+        pe = np.zeros((max_len, d_model))
+        
+        # 计算每个位置的值
+        position = np.arange(0, max_len).reshape(-1, 1)
+        div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+        
+        pe[:, 0::2] = np.sin(position * div_term)
+        pe[:, 1::2] = np.cos(position * div_term)
+        
+        # 增加一个维度，以适应 batch 的处理
+        pe = pe[np.newaxis, ...]
+        
+        # 转换为 Tensor
+        self.register_buffer('pe',torch.tensor(pe, dtype=torch.float32))
+        # self.pe = torch.tensor(pe, dtype=torch.float32)
+    
+    def forward(self, x):
+        # x 的形状应该是 [batch_size, seq_len, d_model]
+        x = x + self.pe[:, :x.size(1), :]
+        return x
+    
+import math
+class LearnedPositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, max_len: int = 5000):
+        super().__init__()
+        # self.linear = nn.Embedding(n_vocab, d_model)
+        self.d_s = math.sqrt(d_model)
+        self.positional_encodings = nn.Parameter(torch.zeros(max_len, 1, d_model), requires_grad=True)
+    def forward(self, x: torch.Tensor):
+        pe = self.positional_encodings[:x.shape[0]]
+        return x * self.d_s + pe
+
 class PrepareForMultiHeadAttention(nn.Module):
     def __init__(self, d_model:int, heads:int,d_k:int,bias:bool) -> None:
         super().__init__()
