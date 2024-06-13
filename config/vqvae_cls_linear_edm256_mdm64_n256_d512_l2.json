@@ -5,15 +5,16 @@
         "seg_size":16,
         "pred_size":1,
         "batch_size":512,
-        "epochs":3000,
+        "epochs":1001,
         "lr":4e-5,
         "b1":0.5,
         "b2":0.999,
         "clip_grad":0.5,
         "hidden_dim":256,
-        "d_model":64,
-        "embedding_dim":1024,
-        "n_embedding":2048,
+        "eeg_d_model":256,
+        "mel_d_model":64,
+        "embedding_dim":512,
+        "n_embedding":256,
         "nhead":2,
         "n_layer":2,
         "loss":"L1Loss",
@@ -23,8 +24,9 @@
         "data_path":"./feat/words",
         "eeg_sr":1024,
         "audio_sr":16000,
+        "n_mels":80,
         "win_len":0.025,
-        "frame_shift":0.010,
-        "pad_mode":"linear_ramp"
+        "frame_shift":0.008,
+        "pad_mode":"constant"
     }
 }

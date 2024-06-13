@@ -14,6 +14,7 @@ from tensorboardX import SummaryWriter
 
 import model.models as models
 from dataset import EEGAudioDataset
+from torch_dct import dct
 
 import json
 import argparse
@@ -39,8 +40,9 @@ def train(argu):
     b1 = model_cfg['b1']
     b2 = model_cfg['b2']
     weight_decay = model_cfg['weight_decay']
-    scaled_dim = model_cfg['scaled_dim']
     d_model = model_cfg['d_model']
+    num_embeddings = model_cfg['num_embeddings']
+    embedding_dim = model_cfg['embedding_dim']
     nhead = model_cfg['nhead']
     n_layer = model_cfg['n_layer']
 
@@ -49,6 +51,7 @@ def train(argu):
     frame_shift = data_cfg['frame_shift']
     eeg_sr = data_cfg['eeg_sr']
     audio_sr = data_cfg['audio_sr']
+    n_mels = data_cfg['n_mels']
     pad_mode = data_cfg['pad_mode']
 
     tensor_type = torch.cuda.FloatTensor
@@ -61,9 +64,9 @@ def train(argu):
         end_sub = argu.sub
     
     for pt in pts[start_sub:end_sub]:
-        dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode)
+        dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode,n_mels=n_mels)
         train_data,train_label,test_data,test_label = dataset.prepareData(seg_size=seg_size)
-        test_mfcc = utils.toMFCC(test_label[:,-1,:40])
+        test_mfcc = utils.toMFCC(utils.getFlatMel(test_label))
         test_mel = test_data
 
         input_dim = test_data.shape[-1]
@@ -74,17 +77,21 @@ def train(argu):
             input_dim=input_dim,
             output_dim=output_dim,
             seg_size=seg_size,
+            pred_size=pred_size,
             d_model=d_model,
+            num_embeddings=num_embeddings,
+            embedding_dim = embedding_dim,
             nhead=nhead,
             n_layer=n_layer
         ).to(device)
-        criterion = nn.L1Loss(reduction='mean').to(device)
+        l1loss = nn.SmoothL1Loss().double().to(device)
         optimizer = torch.optim.Adam(model.parameters(),lr=lr,betas=(b1,b2),weight_decay=weight_decay)
 
-        loss_fn = lambda x,y:0.8*(criterion(x[:,:40], y[:,-1,:40])+criterion(torch.exp(x[:,:40]),torch.exp(y[:,-1,:40])))+0.2*criterion(x[:,40],y[:,-1,40]) #+0.15*criterion(x[:,41],y[:,-1,41])
+        # loss_fn = lambda x,y:0.8*(criterion(x[:,:40], y[:,-1,:40])+criterion(torch.exp(x[:,:40]),torch.exp(y[:,-1,:40])))+0.2*criterion(x[:,40],y[:,-1,40]) #+0.15*criterion(x[:,41],y[:,-1,41])
+        loss_fn = lambda x,y:(l1loss(x.double(), y.double())+l1loss(torch.exp(x.double()).double(),torch.exp(y.double()).double())+l1loss(dct(x.double(),norm='ortho').double(),dct(y.double(),norm='ortho').double()))
 
         start_epoch = 0
-        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}',model_name)
+        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',model_name)
 
         if checkpoint is not None:
             state_dict = utils.load_checkpoint(checkpoint)
@@ -93,12 +100,13 @@ def train(argu):
             start_epoch = state_dict['epoch']
 
         if start_epoch > end_epoch:
-            raise Exception(f'Already got a {model_name} model trained by {end_epoch} rather then {start_epoch}')
+            continue
+            # raise Exception(f'Already got a {model_name} model trained by {end_epoch} rather then {start_epoch}')
 
         train_data = torch.from_numpy(train_data)
-        train_label = torch.from_numpy(train_label)
+        train_label = torch.from_numpy(train_label[:,-pred_size:,:])
         test_data = torch.from_numpy(test_data).to(device).type(tensor_type)
-        test_label = torch.from_numpy(test_label).to(device).type(tensor_type)
+        test_label = torch.from_numpy(test_label[:,-pred_size:,:]).to(device).type(tensor_type)
         train_dataset = TensorDataset(train_data,train_label)
 
         train_dataloader = DataLoader(dataset=train_dataset,num_workers=0,batch_size=batch_size,shuffle=True,pin_memory=True)
@@ -121,6 +129,16 @@ def train(argu):
                 loss.backward()
                 optimizer.step()
 
+            if e!=0 and e%argu.save_interval == 0:
+                save_path = f'{argu.save_model_dir}/{pt}/{model_name}'
+                if os.path.exists(save_path) == False:
+                    os.mkdir(save_path)
+                state_dict = {
+                    'epoch':e,
+                    'model_state_dict':model.state_dict(),
+                    'optimizer_state_dict':optimizer.state_dict()
+                }
+                torch.save(state_dict,os.path.join(save_path,f'{model_name}_{e:06}.pt'))
             # TODO: add audio, figure by epoch to tensorboard
             if e % argu.summary_interval == 0:
                 model.eval()
@@ -128,32 +146,22 @@ def train(argu):
                 test_outputs = torch.clamp(test_outputs,min=np.log(1e-5))
                 test_loss = loss_fn(test_outputs,test_label).detach().cpu().numpy()
                 aver_loss = aver_loss/len(train_dataloader)
-                writer.add_scalar(f'train loss',aver_loss,e)
-                writer.add_scalar(f'test loss',test_loss,e)
-                model_mfcc = utils.toMFCC(test_outputs[:,:40].detach().cpu().numpy())
+                
+                pcc = utils.calPCC(test_outputs,test_label)
+                writer.add_scalar(f'test pcc',pcc,e)
+                writer.add_scalar(f'loss/train',aver_loss,e)
+                writer.add_scalar(f'loss/test',test_loss,e)
+                model_mfcc = utils.toMFCC(utils.getFlatMel(test_outputs.detach().cpu().numpy()))
                 eu_dis = 0
                 for i in range(test_mfcc.shape[0]):
                     eu_dis += np.linalg.norm(model_mfcc[i] - test_mfcc[i])
                 mcd = eu_dis/test_mfcc.shape[0]
-                writer.add_scalar(f'test mcd',mcd,e)
+                writer.add_scalar(f'mcd/test',mcd,e)
                 if e%argu.graph_interval == 0:
                     if e == 0:
-                        writer.add_figure('origin melspec',utils.plot_spectrogram(test_label[:,-1,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
-                    writer.add_figure('test melspec',utils.plot_spectrogram(test_outputs[:,:40].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
-                    writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
-                    # writer.add_figure('test zcr',utils.plot_graph(test_label[:,-1,41].detach().cpu().numpy(),test_outputs[:,41].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
-                # for name,param in model.named_parameters():
-                #     writer.add_histogram(name,param.clone().cpu().data.numpy(),e)
-                #     if param.grad is not None:
-                #         writer.add_histogram(name+'/grad',param.grad.clone().cpu().data.numpy(),e)
+                        writer.add_figure('melspec/origin',utils.plot_spectrogram(test_label.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
+                    writer.add_figure('melspec/test',utils.plot_spectrogram(test_outputs.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
 
-        # test_outputs = model(test_data).detach().cpu().numpy()
-        torch.save({
-            'epoch':end_epoch,
-            'model_state_dict':model.state_dict(),
-            'optimizer_state_dict':optimizer.state_dict()
-            }, f'{argu.save_model_dir}/{pt}/{model_name}_{end_epoch:06}.pt')
-        
         writer.close()
 
 def parseCommand():
@@ -163,13 +171,15 @@ def parseCommand():
 
     parser.add_argument('--config',default='',type=str)
     parser.add_argument('--epoch',default=None,type=int)
-    parser.add_argument('--use_gpu_num',default='2',type=str)
+    parser.add_argument('--use_gpu_num',default='0',type=str)
     parser.add_argument('--input_data_dir',default='./feat',type=str)
     parser.add_argument('--save_model_dir',default='./res',type=str)
     parser.add_argument('--seed',default=2024,type=int)
     parser.add_argument('--sub',default=None,type=int)
     parser.add_argument('--summary_interval',default=5,type=int)
+    parser.add_argument('--save_interval',default=200,type=int)
     parser.add_argument('--graph_interval',default=50,type=int)
+    parser.add_argument('--pretrain_model',default='mel_vqvae',type=str)
     # TODO: add argument to control print interval, summary interval, validate interval
 
     argu = parser.parse_args()

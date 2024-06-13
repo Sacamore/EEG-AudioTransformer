@@ -10,6 +10,7 @@ from collections import OrderedDict
 from torch import Tensor
 
 import model.transformer as transformer
+from model.VQVAE import VectorQuantizer
 
 class Transformer(nn.Module):
     def __init__(self,d_model:int,nhead:int,n_layer:int,dropout:float=0.1) -> None:
@@ -42,37 +43,45 @@ class TransformerModel(nn.Module):
         return res
 
 class Model(nn.Module):
-    def __init__(self,input_dim,output_dim,seg_size,d_model,nhead,n_layer,dropout = 0.1) -> None:
+    def __init__(self,input_dim,output_dim,seg_size,pred_size,d_model,num_embeddings,embedding_dim,nhead,n_layer,dropout = 0.1) -> None:
         super().__init__()
-        self.l1 = nn.Sequential(
-            nn.Linear(input_dim,d_model),
-            nn.LeakyReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model,d_model)
-        )
+        # self.l1 = nn.Sequential(
+        #     nn.Linear(input_dim,d_model),
+        #     nn.LeakyReLU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(d_model,d_model)
+        # )
+        self.pred_size = pred_size
+        self.output_dim = output_dim
+        
+        self.l1 = nn.Linear(input_dim,d_model)
         self.transformer = Transformer(d_model=d_model,nhead=nhead,n_layer=n_layer,dropout=dropout)
         # self.conv1 = nn.Conv1d(d_model,d_model,seg_size//2+1,1,seg_size//4)
         # self.maxpool1 = nn.AvgPool1d(seg_size,1)
+        # self.vector_quantizer = VectorQuantizer(num_embeddings=num_embeddings,embedding_dim=embedding_dim)
         self.l3 = nn.Sequential(
-            nn.Linear(d_model*seg_size,4*d_model),
+            nn.Linear(d_model*seg_size,seg_size*d_model//2),
             # nn.ReLU(),
             nn.LeakyReLU(),
             nn.Dropout(dropout),
             # nn.Linear(4*d_model,2*d_model),
             # nn.ReLU(),
             # nn.Dropout(dropout),
-            nn.Linear(4*d_model,output_dim)
+            nn.Linear(seg_size*d_model//2,pred_size*output_dim)
         )
         # self.gelu2 = nn.GELU()
 
     def forward(self,x:Tensor):
-        x = self.l1(x)
-        x = self.transformer(x)
+        linear_encoded = self.l1(x)
+        transformer_encoded = self.transformer(linear_encoded)
         # x = x.permute(0,2,1)
         # x = self.conv1(x)
-        x = x.contiguous().view(x.size(0), -1)
+        # vq_loss,quantized_vector = self.vector_quantizer(transformer_encoded)
+        # flat_quantizer = quantized_vector.contiguous().view(x.size(0), -1)
+        flat_encoded = transformer_encoded.view(x.size(0),-1)
         # x = self.maxpool1(x)
         # x = x.squeeze(-1)
-        x = self.l3(x)
+        decoded = self.l3(flat_encoded)
+        decoded = decoded.view(x.size(0),self.pred_size,self.output_dim)
         # x = torch.clamp(x,min = np.log(1e-5),max=None)
-        return x
+        return decoded

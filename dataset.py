@@ -9,7 +9,7 @@ import utils
 pts = ['sub-%02d'%i for i in range(1,11)]
 
 class EEGAudioDataset():
-    def __init__(self,sub,data_path= r'./feat/words',win_len = 0.025,frameshift = 0.005,eeg_sr=1024,audio_sr = 16000,pad_mode = 'constant') -> None:
+    def __init__(self,sub,data_path= r'./feat/words',win_len = 0.025,frameshift = 0.005,eeg_sr=1024,audio_sr = 16000,n_mels=40,pad_mode = 'constant') -> None:
         self.eeg = []
         self.audio = []
         self.melspec = []
@@ -22,6 +22,7 @@ class EEGAudioDataset():
         self.audio_sr = audio_sr
         self.sub = sub
         self.pt = sub
+        self.n_mels = n_mels
         self.pad_mode = pad_mode
         self.loadData()
         self.preprocessData()
@@ -56,11 +57,11 @@ class EEGAudioDataset():
         return feat
 
     @staticmethod
-    def extractMelSpecs(audio, sr, windowLength=0.025, frameshift=0.005,pad_mode = 'constant'):
+    def extractMelSpecs(audio, sr, windowLength=0.025, frameshift=0.005,n_mels=40,pad_mode = 'constant'):
         # align to hifigan
         audio = librosa.util.normalize(audio/32767) * 0.95
-        audio = np.pad(audio.astype('double'),(int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),mode='reflect')
-        spectrogram = librosa.feature.melspectrogram(y=audio,sr=sr,n_fft=int(windowLength*sr),hop_length=int(frameshift*sr),center=False,n_mels=40)
+        audio = np.pad(audio.astype('double'),(int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),mode='minimum')
+        spectrogram = librosa.feature.melspectrogram(y=audio,sr=sr,n_fft=int(windowLength*sr),hop_length=int(frameshift*sr),center=False,n_mels=n_mels)
         # spectrogram = np.log(spectrogram)
         spectrogram = np.log(np.clip(spectrogram,a_min=1e-5,a_max=None))
         # rms = librosa.feature.rms(y=audio,frame_length=int(windowLength*sr),hop_length=int(frameshift*sr),center=False)
@@ -84,21 +85,35 @@ class EEGAudioDataset():
     def preprocessData(self):
         for i in range(len(self.eeg)):
             self.eeg_hg.append(self.extractHG(self.eeg[i],self.eeg_sr,self.win_len,self.frameshift,pad_mode=self.pad_mode))
-            self.melspec.append(self.extractMelSpecs(self.audio[i],self.audio_sr,self.win_len,self.frameshift,pad_mode=self.pad_mode))
+            self.melspec.append(self.extractMelSpecs(self.audio[i],self.audio_sr,self.win_len,self.frameshift,self.n_mels,pad_mode=self.pad_mode))
             if self.eeg_hg[i].shape[0]!=self.melspec[i].shape[0]:
             # print(f'{pt}-{i} not align with audio:{audio[i].shape[0]} and eeg:{eeg[i].shape[0]}')
                 minlen = min(self.eeg_hg[i].shape[0],self.melspec[i].shape[0])
                 self.eeg_hg[i] = self.eeg_hg[i][:minlen,:]
                 self.melspec[i] = self.melspec[i][:minlen,:]
     
-    def prepareData(self,seg_size,hop_size = 1,train_test_ratio=0.9):
-        split_index = int(len(self.eeg_hg)*train_test_ratio)
+    def prepareData(self,seg_size,fold_num=0,hop_size = 1):
+        # split_len = len(self.eeg_hg)//10
 
+        # test_start = split_len*fold_num
+        # test_end = test_start+split_len
+        # test_indices = np.zeros(len(self.eeg_hg), dtype=bool)
+        # test_indices[test_start:test_end] = True
+        # train_indices = ~test_indices
+
+        # print(type(self.eeg_hg),type(train_indices))
         # get train and test list of words
-        train_data_list = self.eeg_hg[:split_index]
-        train_label_list = self.melspec[:split_index]
-        test_data_list = self.eeg_hg[split_index:]
-        test_label_list = self.melspec[split_index:]
+        train_data_list = []
+        train_label_list = []
+        test_data_list = []
+        test_label_list = [] 
+        for i in range(len(self.eeg_hg)):
+            if i%10 == fold_num:
+                test_data_list.append(self.eeg_hg[i])
+                test_label_list.append(self.melspec[i])
+            else:
+                train_data_list.append(self.eeg_hg[i])
+                train_label_list.append(self.melspec[i])
 
         train_data = []
         test_data = []

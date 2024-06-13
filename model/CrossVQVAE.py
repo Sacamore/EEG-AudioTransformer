@@ -190,14 +190,14 @@ class CrossVQEmbeddingEMA(nn.Module):
         for index in e_indices:
             self.unactivated_count[index.item()] = 0
 
-        # activated_indices = []
+        activated_indices = []
         unactivated_indices = []
         for i,x in enumerate(self.unactivated_count):
             if x > 300:
                 unactivated_indices.append(i)
                 self.unactivated_count[i] = 0
-            # elif x >= 0 and x < 100:
-            #     activated_indices.append(i)
+            elif x >= 0 and x < 100:
+                activated_indices.append(i)
 
         # activated_quantized = F.embedding(torch.tensor(activated_indices,dtype=torch.long).cuda(),self.embedding) # [?,D]
         for i in unactivated_indices:

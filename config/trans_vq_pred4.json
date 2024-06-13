@@ -1,0 +1,30 @@
+{
+    "model_name":"head4_layer6_prev16_feat40_regular",
+    "model_type":"transformer",
+    "model_config":{
+        "seg_size":16,
+        "pred_size":4,
+        "batch_size":512,
+        "epochs":3001,
+        "lr":2e-5,
+        "b1":0.5,
+        "b2":0.999,
+        "weight_decay":1e-4,
+        "d_model":256,
+        "num_embeddings":1024,
+        "embedding_dim":2048,
+        "nhead":4,
+        "n_layer":6,
+        "loss":"L1Loss",
+        "optimizer":"Adam"
+    },
+    "data_config":{
+        "data_path":"./feat/words",
+        "eeg_sr":1024,
+        "audio_sr":16000,
+        "n_mels":40,
+        "win_len":0.025,
+        "frame_shift":0.008,
+        "pad_mode":"constant"
+    }
+}
