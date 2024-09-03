@@ -4,5 +4,6 @@
 /logs
 /.vscode
 /model/__pycache__
+/raw_data
 tensorboard.sh
 nohup.out
