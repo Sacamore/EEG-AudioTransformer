@@ -95,7 +95,6 @@ def train(argu):
         optimizer = torch.optim.Adam(chain(mel_encoder.parameters(),vector_quantizer.parameters(),mel_decoder.parameters()),lr=lr,betas=(b1,b2))
         scheduler = MultiStepLR(optimizer,milestones=[10,20,30],gamma=0.5)
 
-        # TODO:try smooth l1 loss
         l1loss = nn.SmoothL1Loss().double().to(device)
         loss_fn = lambda x,y:(l1loss(x.double(), y.double())+l1loss(torch.exp(x.double()).double(),torch.exp(y.double()).double())+l1loss(dct(x.double(),norm='ortho').double(),dct(y.double(),norm='ortho').double()))
 

@@ -5,6 +5,7 @@
 - config：模型配置文件  
 - feat：处理过的数据  
 - model: 不同模型文件
+- history: 历史文件，现已不再使用
 
 
 cmg_downstream cmg模型下游训练
@@ -22,4 +23,4 @@ vqvae_mel.py 使用vqvae训练的mel部分
 
 使用该项目时，应当：  
 1. 调用vqvae_mel.py，训练mel频谱的自编码器  
-3. 调用vqvae_cls.py，训练最终的分类器
+2. 调用vqvae_cls.py，训练最终的分类器

@@ -5,5 +5,8 @@
 /.vscode
 /model/__pycache__
 /raw_data
+/feat
+/history
+/config/history
 tensorboard.sh
 nohup.out

@@ -107,7 +107,8 @@ def train(argu):
         input_dim = test_data.shape[-1]
         output_dim = test_label.shape[-1]
 
-        eeg_encoder = EEGConvEncoder(input_dim=input_dim,d_model=d_model,n_layer=n_layer).to(device)
+        # eeg_encoder = EEGConvEncoder(input_dim=input_dim,d_model=d_model,n_layer=n_layer).to(device)
+        eeg_encoder = EEGEncoder(input_dim=input_dim,d_model=d_model,n_layer=n_layer).to(device)
         # eeg_encoder.apply(weights_init)
 
         mel_encoder = MelEncoder(input_dim=output_dim,d_model=d_model).to(device)

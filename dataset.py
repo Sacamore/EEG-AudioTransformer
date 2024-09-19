@@ -9,7 +9,7 @@ import utils
 pts = ['sub-%02d'%i for i in range(1,11)]
 
 class EEGAudioDataset():
-    def __init__(self,sub,data_path= r'./feat/words',win_len = 0.025,frameshift = 0.005,eeg_sr=1024,audio_sr = 16000,n_mels=40,pad_mode = 'constant') -> None:
+    def __init__(self,sub,data_path= r'./feat',win_len = 0.025,frameshift = 0.005,eeg_sr=1024,audio_sr = 16000,n_mels=40,pad_mode = 'constant') -> None:
         self.eeg = []
         self.audio = []
         self.melspec = []
