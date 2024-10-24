@@ -4,6 +4,7 @@ import librosa.util
 import librosa.feature
 import scipy.signal
 import scipy.fftpack
+import random
 import utils
 
 pts = ['sub-%02d'%i for i in range(1,11)]
@@ -34,7 +35,7 @@ class EEGAudioDataset():
         data = scipy.signal.detrend(data,axis=0)
         numWindows = int(np.round(data.shape[0]/(frameshift*sr)))
 
-        sos = scipy.signal.iirfilter(4, [70/(sr/2),170/(sr/2)],btype='bandpass',output='sos')
+        sos = scipy.signal.iirfilter(4, [70/(sr/2),220/(sr/2)],btype='bandpass',output='sos')
         data = scipy.signal.sosfiltfilt(sos,data,axis=0)
 
         sos = scipy.signal.iirfilter(4, [98/(sr/2),102/(sr/2)],btype='bandstop',output='sos')
@@ -43,7 +44,10 @@ class EEGAudioDataset():
         sos = scipy.signal.iirfilter(4, [148/(sr/2),152/(sr/2)],btype='bandstop',output='sos')
         data = scipy.signal.sosfiltfilt(sos,data,axis=0)
 
-        # hg = np.abs(hilbert3(data))
+        sos = scipy.signal.iirfilter(4, [198/(sr/2),202/(sr/2)],btype='bandstop',output='sos')
+        data = scipy.signal.sosfiltfilt(sos,data,axis=0)
+
+        data = np.abs(hilbert3(data))
         feat = np.zeros((numWindows,data.shape[1]))
         # hg = np.pad(hg,((int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),(0,0)),mode=pad_mode)
         data = np.pad(data,((int(np.floor((windowLength-frameshift)*sr/2)), int(np.ceil((windowLength-frameshift)*sr/2))),(0,0)),mode=pad_mode)
@@ -92,23 +96,15 @@ class EEGAudioDataset():
                 self.eeg_hg[i] = self.eeg_hg[i][:minlen,:]
                 self.melspec[i] = self.melspec[i][:minlen,:]
     
-    def prepareData(self,seg_size,fold_num=0,hop_size = 1):
-        # split_len = len(self.eeg_hg)//10
+    def prepareData(self,seg_size,fold_num=0,hop_size = 1,isAugment = False):
 
-        # test_start = split_len*fold_num
-        # test_end = test_start+split_len
-        # test_indices = np.zeros(len(self.eeg_hg), dtype=bool)
-        # test_indices[test_start:test_end] = True
-        # train_indices = ~test_indices
-
-        # print(type(self.eeg_hg),type(train_indices))
         # get train and test list of words
         train_data_list = []
         train_label_list = []
         test_data_list = []
         test_label_list = [] 
         for i in range(len(self.eeg_hg)):
-            if i%10 == fold_num:
+            if int(i/10) == fold_num:
                 test_data_list.append(self.eeg_hg[i])
                 test_label_list.append(self.melspec[i])
             else:
@@ -125,15 +121,23 @@ class EEGAudioDataset():
         for w in range(len(train_data_list)):
             word = np.pad(train_data_list[w],pad_width,mode=self.pad_mode)
             mel = np.pad(train_label_list[w],pad_width,mode=self.pad_mode)
+            # word = train_data_list[w]
+            # mel = train_label_list[w]
             num_win = int(train_data_list[w].shape[0]/float(hop_size))
             for i in range(num_win):
                 start = i*hop_size
                 end = start + seg_size
                 train_data.append(word[start:end,:])
                 train_label.append(mel[start:end,:])
+                if isAugment and i%4==0:
+                    aug_word,aug_mel = self.augmentData(word[start:end,:],mel[start:end,:])
+                    train_data.append(aug_word)
+                    train_label.append(aug_mel)
         for w in range(len(test_data_list)):
             word = np.pad(test_data_list[w],pad_width,mode=self.pad_mode)
             mel = np.pad(test_label_list[w],pad_width,mode=self.pad_mode)
+            # word = train_data_list[w]
+            # mel = train_label_list[w]
             num_win = int(test_data_list[w].shape[0]/float(hop_size))
             for i in range(num_win):
                 start = i*hop_size
@@ -156,3 +160,37 @@ class EEGAudioDataset():
         test_data = (test_data-train_data_mean)/train_data_std
 
         return train_data,train_label,test_data,test_label
+
+    # randomly exchange the 2 frame of word and mel
+    def augmentData(self,word,mel):
+        isSwap = False
+        isAddNoise = True
+        isTimeShift = False
+        isPitchShift = False
+        if isSwap:
+            frame1, frame2 = random.sample(range(len(word)), 2)
+            # Swap the frames in the word array
+            word[frame1], word[frame2] = word[frame2], word[frame1]
+            # Swap the frames in the mel array
+            mel[frame1], mel[frame2] = mel[frame2], mel[frame1]
+
+        if isAddNoise:
+            t = word.shape[0]
+            ch = word.shape[1]
+            noise_factor = 0.005
+            for i in range(ch):
+                noise = np.random.randn(t) 
+                word[:,i] = word[:,i] + noise_factor*noise
+        # 3. Time shifting (randomly shift the signal in time)
+        if isTimeShift:
+            max_shift = random.randint(-10, 10)  # Shift can be negative or positive
+            word = np.roll(word, max_shift, axis=0)
+            mel = np.roll(mel, max_shift, axis=0)
+
+        # 4. Pitch shifting (change pitch without altering speed)
+        if isPitchShift:
+            sampling_rate = 16000  # Replace with the actual sampling rate if known
+            pitch_factor = random.uniform(-2, 2)  # Shift pitch randomly by -2 to +2 steps
+            word = librosa.effects.pitch_shift(word.T, sampling_rate, pitch_factor).T
+            # For mel, a more advanced method may be needed for pitch shifting
+        return word, mel  

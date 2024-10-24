@@ -23,7 +23,6 @@ from time import sleep
 # from scipy.stats import pearsonr
 
 import json
-import argparse
 
 config_path = r'./config'
 
@@ -85,6 +84,7 @@ def train(argu):
     audio_sr = data_cfg['audio_sr']
     n_mels = data_cfg['n_mels']
     pad_mode = data_cfg['pad_mode']
+    isAugment = data_cfg['isAugment']
 
     tensor_type = torch.cuda.FloatTensor
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -100,7 +100,7 @@ def train(argu):
 
     for pt in pts[start_sub:end_sub]:
         dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode,n_mels=n_mels)
-        train_data,train_label,test_data,test_label = dataset.prepareData(seg_size=seg_size,fold_num=argu.fold_num)
+        train_data,train_label,test_data,test_label = dataset.prepareData(seg_size=seg_size,fold_num=argu.fold_num,hop_size=1,isAugment=isAugment)
         test_mfcc = utils.toMFCC(utils.getFlatMel(test_label))
         test_mel_data = test_label
 
@@ -241,30 +241,9 @@ def train(argu):
         
         writer.close()
 
-def parseCommand():
-    print('Initializing Training Process..')
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--config',default='',type=str)
-    parser.add_argument('--epoch',default=None,type=int)
-    parser.add_argument('--use_gpu_num',default='0',type=str)
-    parser.add_argument('--input_data_dir',default='./feat',type=str)
-    parser.add_argument('--save_model_dir',default='./res',type=str)
-    parser.add_argument('--seed',default=2024,type=int)
-    parser.add_argument('--sub',default=None,type=int)
-    parser.add_argument('--summary_interval',default=5,type=int)
-    parser.add_argument('--save_interval',default=200,type=int)
-    parser.add_argument('--graph_interval',default=50,type=int)
-    parser.add_argument('--pretrain_model',default='mel_vqvae',type=str)
-    parser.add_argument('--fold_num',default=0,type=int)
-    # TODO: add argument to control print interval, summary interval, validate interval
-
-    argu = parser.parse_args()
-    return argu
 
 if __name__ == '__main__':
-    argu = parseCommand()
+    argu = utils.parseCommand()
     os.environ["CUDA_VISIBLE_DEVICES"] = argu.use_gpu_num
     np.random.seed(seed=argu.seed)
     torch.manual_seed(argu.seed)

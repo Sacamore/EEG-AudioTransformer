@@ -69,3 +69,27 @@ def plot_graph(ori,model,sr,hop_len):
     plt.draw()
     plt.close()
     return fig
+
+import argparse
+
+def parseCommand():
+    print('Initializing Training Process..')
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--config',default='',type=str)
+    parser.add_argument('--epoch',default=None,type=int)
+    parser.add_argument('--use_gpu_num',default='0',type=str)
+    parser.add_argument('--input_data_dir',default='./feat',type=str)
+    parser.add_argument('--save_model_dir',default='./res',type=str)
+    parser.add_argument('--seed',default=2024,type=int)
+    parser.add_argument('--sub',default=None,type=int)
+    parser.add_argument('--summary_interval',default=5,type=int)
+    parser.add_argument('--save_interval',default=200,type=int)
+    parser.add_argument('--graph_interval',default=50,type=int)
+    parser.add_argument('--pretrain_model',default='mel_vqvae',type=str)
+    parser.add_argument('--fold_num',default=0,type=int)
+    # TODO: add argument to control print interval, summary interval, validate interval
+
+    argu = parser.parse_args()
+    return argu

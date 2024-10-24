@@ -1,0 +1,11 @@
+linear regression
+sub-01 has mean correlation of 0.495404
+sub-02 has mean correlation of 0.614066
+sub-03 has mean correlation of 0.828894
+sub-04 has mean correlation of 0.766885
+sub-05 has mean correlation of 0.523527
+sub-06 has mean correlation of 0.854428
+sub-07 has mean correlation of 0.700102
+sub-08 has mean correlation of 0.703663
+sub-09 has mean correlation of 0.638907
+sub-10 has mean correlation of 0.680938

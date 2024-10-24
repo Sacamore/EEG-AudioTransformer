@@ -10,3 +10,4 @@
 /config/history
 tensorboard.sh
 nohup.out
+/hifigan/cp_hifigan
