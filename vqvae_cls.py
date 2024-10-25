@@ -23,6 +23,7 @@ from time import sleep
 # from scipy.stats import pearsonr
 
 import json
+import csv
 
 config_path = r'./config'
 
@@ -41,15 +42,6 @@ def weights_init(m):
         nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
         if m.bias is not None:
             nn.init.constant_(m.bias, 0)
-
-# def calPCC(x,y):
-#     flat_x = utils.getFlatMel(x.detach().cpu().numpy())
-#     flat_y = utils.getFlatMel(y.detach().cpu().numpy())
-#     pcc = 0
-#     for d in range(flat_x.shape[1]):
-#         r,_ = pearsonr(flat_x[:,d],flat_y[:,d])
-#         pcc = pcc + r
-#     return pcc/flat_x.shape[1]   
 
 def train(argu):
     # open config file
@@ -95,8 +87,7 @@ def train(argu):
         start_sub = argu.sub-1
         end_sub = argu.sub
         
-    if argu.fold_num != 0:
-        model_name = f'{model_name}_{argu.fold_num}'
+    model_name = f'{model_name}_{argu.fold_num}'
 
     for pt in pts[start_sub:end_sub]:
         dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode,n_mels=n_mels)
@@ -162,7 +153,17 @@ def train(argu):
         train_dataloader = DataLoader(dataset=train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True)
         # test_dataloader = DataLoader(dataset=test_dataset,batch_size=batch_size,shuffle=False,pin_memory=True)
 
-        writer = SummaryWriter(f'./logs/{pt}/{model_name}')
+        if argu.save_tensorboard:
+            writer = SummaryWriter(f'./logs/{pt}/{model_name}')
+        if argu.save_logtxt:
+            if os.path.exists(f'./logs/{pt}/{model_name}') == False:
+                os.mkdir(f'./logs/{pt}/{model_name}')
+            log_header = ["epoch", "test_pcc", "test_loss/eeg", "train_acc/eeg-vq","train_loss/cls", "train_loss/eeg", "test_mcd/eeg"]
+            file_exists = os.path.isfile('./logs/{pt}/{model_name}/log.txt')
+            log_file = open('./logs/{pt}/{model_name}/log.txt', 'a', newline='')
+            csv_writer = csv.writer(log_file)
+            if not file_exists:
+                csv_writer.writerow(log_header)
 
         for e in range(start_epoch,end_epoch):
             models = [eeg_encoder,classifier]
@@ -200,46 +201,48 @@ def train(argu):
                     os.mkdir(save_path)
                 state_dict = {
                     'eeg_encoder':eeg_encoder.state_dict(),
-                    # 'clip':clip.state_dict(),
                     'mel_encoder':mel_encoder.state_dict(),
                     'vector_quantizer':vector_quantizer.state_dict(),
                     'mel_decoder':mel_decoder.state_dict(),
                     'classifier':classifier.state_dict(),
                     'eeg_optimizer':eeg_optimizer.state_dict(),
-                    # 'optimizer':optimizer.state_dict(),
                     'epoch':e
                 }
-                # save_path = f'{argu.save_model_dir}/{pt}/{model_name}/{model_name}_{e:06}.pt'
                 torch.save(state_dict,os.path.join(save_path,f'{model_name}_{e:06}.pt'))
 
-            # TODO: add audio, figure by epoch to tensorboard
             if e % argu.summary_interval == 0:
                 to_eval(models)
                 encoded_eeg = eeg_encoder(test_data)
                 eeg_vq = classifier.cls(encoded_eeg)
                 test_eeg_outputs = mel_decoder(eeg_vq)
                 test_eeg_loss = loss_fn(test_eeg_outputs,test_label).detach().cpu().numpy()
-            
-                pcc = utils.calPCC(test_eeg_outputs,test_label)
-                writer.add_scalar(f'test pcc',pcc,e)
-                writer.add_scalar(f'test_loss/eeg',test_eeg_loss,e)
 
-                writer.add_scalar(f'train_acc/eeg-vq',aver_acc_rate/len(train_dataloader),e)
-                writer.add_scalar(f'train_loss/cls',aver_cls_loss/len(train_dataloader),e)
-                writer.add_scalar(f'train_loss/eeg',aver_eeg_loss/len(train_dataloader),e)
-                
+                pcc = utils.calPCC(test_eeg_outputs,test_label)
                 test_eeg_mfcc = utils.toMFCC(utils.getFlatMel(test_eeg_outputs.detach().cpu().numpy()))
                 eeg_eu_dis = 0
                 for i in range(test_mfcc.shape[0]):
                     eeg_eu_dis += np.linalg.norm(test_eeg_mfcc[i] - test_mfcc[i])
                 eeg_mcd = eeg_eu_dis/test_mfcc.shape[0]
-                writer.add_scalar(f'test_mcd/eeg',eeg_mcd,e)
-                if e%argu.graph_interval == 0:
-                    writer.add_figure('melspec/eeg',utils.plot_spectrogram(test_eeg_outputs.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
+
+                if argu.save_tensorboard:
+                    writer.add_scalar(f'test pcc',pcc,e)
+                    writer.add_scalar(f'test_loss/eeg',test_eeg_loss,e)
+                    writer.add_scalar(f'train_acc/eeg-vq',aver_acc_rate/len(train_dataloader),e)
+                    writer.add_scalar(f'train_loss/cls',aver_cls_loss/len(train_dataloader),e)
+                    writer.add_scalar(f'train_loss/eeg',aver_eeg_loss/len(train_dataloader),e)
+                    writer.add_scalar(f'test_mcd/eeg',eeg_mcd,e)
+                    if e%argu.graph_interval == 0:
+                        writer.add_figure('melspec/eeg',utils.plot_spectrogram(test_eeg_outputs.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
                     
-                    # writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,-1,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
+                if argu.save_logtxt:
+                    log_data = [e, pcc, test_eeg_loss, aver_acc_rate / len(train_dataloader), aver_cls_loss / len(train_dataloader), aver_eeg_loss / len(train_dataloader), eeg_mcd]
+                    csv_writer.writerow(log_data)  # 写入数据行
+                        
         
-        writer.close()
+        if argu.save_tensorboard:
+            writer.close()
+        if argu.save_logtxt:
+            log_file.close()
 
 
 if __name__ == '__main__':

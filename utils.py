@@ -73,8 +73,6 @@ def plot_graph(ori,model,sr,hop_len):
 import argparse
 
 def parseCommand():
-    print('Initializing Training Process..')
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--config',default='',type=str)
@@ -87,9 +85,19 @@ def parseCommand():
     parser.add_argument('--summary_interval',default=5,type=int)
     parser.add_argument('--save_interval',default=200,type=int)
     parser.add_argument('--graph_interval',default=50,type=int)
-    parser.add_argument('--pretrain_model',default='mel_vqvae',type=str)
+    parser.add_argument('--pretrain_model',default='',type=str)
     parser.add_argument('--fold_num',default=0,type=int)
-    # TODO: add argument to control print interval, summary interval, validate interval
+    parser.add_argument('--save_tensorboard',default=True,type=bool)
+    parser.add_argument('--save_logtxt',default=False,type=bool)
 
     argu = parser.parse_args()
+    print(f"Initializing Training Process: \n
+            config: {argu.config}\n
+            use_gpu_num: {argu.use_gpu_num}\n
+            seed: {argu.seed} \n
+            sub: {argu.sub} \n
+            fold: {argu.fold_num}\n
+            pretrain model: {'None' if argu.pretrain_model=='' else argu.pretrain_model}\n
+            save: {'tensorboard' if argu.save_tensorboard else ''} {'logtxt' if argu.save_logtxt else ''}\n")
+
     return argu

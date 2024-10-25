@@ -21,7 +21,7 @@ from dataset import EEGAudioDataset
 from torch_dct import dct
 
 import json
-import argparse
+import csv
 
 config_path = r'./config'
 
@@ -76,8 +76,7 @@ def train(argu):
         start_sub = argu.sub-1
         end_sub = argu.sub
     
-    if argu.fold_num != 0:
-        model_name = f'{model_name}_{argu.fold_num}'
+    model_name = f'{model_name}_{argu.fold_num}'
     
     for pt in pts[start_sub:end_sub]:
         dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode,n_mels=n_mels)
@@ -123,7 +122,17 @@ def train(argu):
         train_dataloader = DataLoader(dataset=train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True)
         # test_dataloader = DataLoader(dataset=test_dataset,batch_size=batch_size,shuffle=False,pin_memory=True)
 
-        writer = SummaryWriter(f'./logs/{pt}/{model_name}')
+        if argu.save_tensorboard:
+            writer = SummaryWriter(f'./logs/{pt}/{model_name}')
+        if argu.save_logtxt:
+            if os.path.exists(f'./logs/{pt}/{model_name}') == False:
+                os.mkdir(f'./logs/{pt}/{model_name}')
+            log_header = ["epoch", "test_loss/mel", "train_loss/mel", "reset_number","test_mcd/mel"]
+            file_exists = os.path.isfile('./logs/{pt}/{model_name}/log.txt')
+            log_file = open('./logs/{pt}/{model_name}/log.txt', 'a', newline='')
+            csv_writer = csv.writer(log_file)
+            if not file_exists:
+                csv_writer.writerow(log_header)
 
         for e in range(start_epoch,end_epoch):
             models = [mel_encoder,vector_quantizer,mel_decoder]
@@ -151,16 +160,12 @@ def train(argu):
                 if os.path.exists(save_path) == False:
                     os.mkdir(save_path)
                 state_dict = {
-                    # 'eeg_encoder':eeg_encoder.state_dict(),
-                    # 'clip':clip.state_dict(),
                     'mel_encoder':mel_encoder.state_dict(),
                     'vector_quantizer':vector_quantizer.state_dict(),
                     'mel_decoder':mel_decoder.state_dict(),
-                    # 'eeg_optimizer':eeg_optimizer.state_dict(),
                     'optimizer':optimizer.state_dict(),
                     'epoch':e
                 }
-                # save_path = f'{argu.save_model_dir}/{pt}/{model_name}/{model_name}_{e:06}.pt'
                 torch.save(state_dict,os.path.join(save_path,f'{model_name}_{e:06}.pt'))
 
             # TODO: add audio, figure by epoch to tensorboard
@@ -170,25 +175,31 @@ def train(argu):
                 _,mel_vq = vector_quantizer(encoded_mel)
                 test_mel_outputs = mel_decoder(mel_vq)
                 test_mel_loss = loss_fn(test_mel_outputs,test_label).detach().cpu().numpy()
-                writer.add_scalar(f'test_loss/mel',test_mel_loss,e)
-                writer.add_scalar(f'train_loss/mel',aver_mel_loss/len(train_dataloader),e)     
-                writer.add_scalar(f'reset number',vector_quantizer.reset_num,e)
                 vector_quantizer.reset_num = 0
                 test_mel_mfcc = utils.toMFCC(utils.getFlatMel(test_mel_outputs.detach().cpu().numpy()))
                 mel_eu_dis = 0
                 for i in range(test_mfcc.shape[0]):
                     mel_eu_dis += np.linalg.norm(test_mel_mfcc[i] - test_mfcc[i])
                 mel_mcd = mel_eu_dis/test_mfcc.shape[0]
-                writer.add_scalar(f'test_mcd/mel',mel_mcd,e)
-                if e%argu.graph_interval == 0:
-                    if e == 0:
-                        writer.add_figure('melspec/origin',utils.plot_spectrogram(test_label.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
-                    writer.add_figure('melspec/mel',utils.plot_spectrogram(test_mel_outputs.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
-                    # writer.add_figure('test eeg melspec',utils.plot_spectrogram(test_eeg_outputs[:,-1,:].detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
-                    
-                    # writer.add_figure('test rms',utils.plot_graph(test_label[:,-1,40].detach().cpu().numpy(),test_outputs[:,-1,40].detach().cpu().numpy(),sr=audio_sr,hop_len=int(audio_sr*frame_shift)),e)
-        
-        writer.close()
+
+                if argu.save_tensorboard:
+                    writer.add_scalar(f'test_loss/mel',test_mel_loss,e)
+                    writer.add_scalar(f'train_loss/mel',aver_mel_loss/len(train_dataloader),e)     
+                    writer.add_scalar(f'reset number',vector_quantizer.reset_num,e)
+                    writer.add_scalar(f'test_mcd/mel',mel_mcd,e)
+                    if e%argu.graph_interval == 0:
+                        if e == 0:
+                            writer.add_figure('melspec/origin',utils.plot_spectrogram(test_label.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)))
+                        writer.add_figure('melspec/mel',utils.plot_spectrogram(test_mel_outputs.detach().cpu().numpy(),audio_sr,int(audio_sr*frame_shift),int(audio_sr*win_len)),e)
+
+                if argu.save_logtxt:
+                    log_data = [e, test_mel_loss, aver_mel_loss/len(train_dataloader), vector_quantizer.reset_num,mel_mcd]
+                    csv_writer.writerow(log_data)  # 写入数据行
+
+        if argu.save_tensorboard:
+            writer.close()
+        if argu.save_logtxt:
+            log_file.close()
 
 if __name__ == '__main__':
     argu = utils.parseCommand()
