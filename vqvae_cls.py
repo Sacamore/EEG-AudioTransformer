@@ -87,7 +87,7 @@ def train(argu):
         start_sub = argu.sub-1
         end_sub = argu.sub
         
-    model_name = f'{model_name}_{argu.fold_num}'
+    # model_name = f'{model_name}_{argu.fold_num}'
 
     for pt in pts[start_sub:end_sub]:
         dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode,n_mels=n_mels)
@@ -114,7 +114,7 @@ def train(argu):
         loss_fn = lambda x,y:(l1loss(x.double(), y.double())+l1loss(torch.exp(x.double()).double(),torch.exp(y.double()).double())+l1loss(dct(x.double(),norm='ortho').double(),dct(y.double(),norm='ortho').double()))
 
         start_epoch = 0
-        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',f'{model_name}')
+        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',f'{model_name}_{argu.fold_num}')
         if checkpoint is not None:
             state_dict = utils.load_checkpoint(checkpoint)
             start_epoch = state_dict['epoch']
@@ -129,8 +129,8 @@ def train(argu):
             eeg_optimizer.load_state_dict(state_dict['eeg_optimizer'])
             classifier.load_state_dict(state_dict['classifier'])
         else:
-            pretrain_model = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{argu.pretrain_model}',f'{argu.pretrain_model}')
-            while pretrain_model is None or pretrain_model!= f'{argu.save_model_dir}/{pt}/{argu.pretrain_model}/{argu.pretrain_model}_001000.pt':
+            pretrain_model = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{argu.pretrain_model}',f'{argu.pretrain_model}_{argu.fold_num}')
+            while pretrain_model is None or pretrain_model!= f'{argu.save_model_dir}/{pt}/{argu.pretrain_model}/{argu.pretrain_model}_{argu.fold_num}_001000.pt':
                 print(f'waiting:{pretrain_model}')
                 sleep(60)
                 pretrain_model = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{argu.pretrain_model}',f'{argu.pretrain_model}')
@@ -159,11 +159,10 @@ def train(argu):
             if os.path.exists(f'./logs/{pt}/{model_name}') == False:
                 os.mkdir(f'./logs/{pt}/{model_name}')
             log_header = ["epoch", "test_pcc", "test_loss/eeg", "train_acc/eeg-vq","train_loss/cls", "train_loss/eeg", "test_mcd/eeg"]
-            file_exists = os.path.isfile('./logs/{pt}/{model_name}/log.txt')
-            log_file = open('./logs/{pt}/{model_name}/log.txt', 'a', newline='')
+            # file_exists = os.path.isfile('./logs/{pt}/{model_name}/{model_name}_{argu.fold_num}.txt')
+            log_file = open(f'./logs/{pt}/{model_name}/{model_name}_{argu.fold_num}.txt', 'w', newline='')
             csv_writer = csv.writer(log_file)
-            if not file_exists:
-                csv_writer.writerow(log_header)
+            csv_writer.writerow(log_header)
 
         for e in range(start_epoch,end_epoch):
             models = [eeg_encoder,classifier]
@@ -208,7 +207,7 @@ def train(argu):
                     'eeg_optimizer':eeg_optimizer.state_dict(),
                     'epoch':e
                 }
-                torch.save(state_dict,os.path.join(save_path,f'{model_name}_{e:06}.pt'))
+                torch.save(state_dict,os.path.join(save_path,f'{model_name}_{argu.fold_num}_{e:06}.pt'))
 
             if e % argu.summary_interval == 0:
                 to_eval(models)

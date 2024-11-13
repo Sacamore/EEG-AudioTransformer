@@ -1,8 +1,14 @@
 #!/bin/bash
 
-for((i=1;i<=10;i++));do
-    for((j=0;j<10;j++));do
+for i in $(seq 1 10);do
+    for j in $(seq 0 9);do
         echo "----------executing sub-${i} fold-${j}----------";
-        python vqvae_mel.py --config vqvae_mel_n512d1024 --sub ${i} --fold_num ${j} --save_tensorboard false --save_logtxt true;
+        echo $(date +%F%n%T)
+        python vqvae_mel.py --config vqvae_mel_n512d1024_full --sub ${i} --fold_num ${j} --save_logtxt --use_gpu_num 0;
+        echo $(date +%F%n%T)
+        python vqvae_cls.py --config vqvae_cls_n512d1024_full --sub ${i} --fold_num ${j} --pretrain_model vqvae_mel_n512d1024_full --save_logtxt --use_gpu_num 0;
+        echo $(date +%F%n%T)
     done;
 done;
+
+# python analyze.py

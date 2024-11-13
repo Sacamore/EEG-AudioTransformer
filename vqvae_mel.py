@@ -76,7 +76,7 @@ def train(argu):
         start_sub = argu.sub-1
         end_sub = argu.sub
     
-    model_name = f'{model_name}_{argu.fold_num}'
+    # model_name = f'{model_name}_{argu.fold_num}'
     
     for pt in pts[start_sub:end_sub]:
         dataset = EEGAudioDataset(pt,data_path=data_path,win_len=win_len,frameshift=frame_shift,eeg_sr=eeg_sr,audio_sr=audio_sr,pad_mode=pad_mode,n_mels=n_mels)
@@ -98,7 +98,7 @@ def train(argu):
         loss_fn = lambda x,y:(l1loss(x.double(), y.double())+l1loss(torch.exp(x.double()).double(),torch.exp(y.double()).double())+l1loss(dct(x.double(),norm='ortho').double(),dct(y.double(),norm='ortho').double()))
 
         start_epoch = 0
-        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',f'{model_name}')
+        checkpoint = utils.scan_checkpoint(f'{argu.save_model_dir}/{pt}/{model_name}',f'{model_name}_{argu.fold_num}')
         if checkpoint is not None:
             state_dict = utils.load_checkpoint(checkpoint)
             start_epoch = state_dict['epoch']
@@ -128,11 +128,10 @@ def train(argu):
             if os.path.exists(f'./logs/{pt}/{model_name}') == False:
                 os.mkdir(f'./logs/{pt}/{model_name}')
             log_header = ["epoch", "test_loss/mel", "train_loss/mel", "reset_number","test_mcd/mel"]
-            file_exists = os.path.isfile('./logs/{pt}/{model_name}/log.txt')
-            log_file = open('./logs/{pt}/{model_name}/log.txt', 'a', newline='')
+            # file_exists = os.path.isfile('./logs/{pt}/{model_name}/{model_name}_{argu.fold_num}.txt')
+            log_file = open(f'./logs/{pt}/{model_name}/{model_name}_{argu.fold_num}', 'w', newline='')
             csv_writer = csv.writer(log_file)
-            if not file_exists:
-                csv_writer.writerow(log_header)
+            csv_writer.writerow(log_header)
 
         for e in range(start_epoch,end_epoch):
             models = [mel_encoder,vector_quantizer,mel_decoder]
@@ -166,7 +165,7 @@ def train(argu):
                     'optimizer':optimizer.state_dict(),
                     'epoch':e
                 }
-                torch.save(state_dict,os.path.join(save_path,f'{model_name}_{e:06}.pt'))
+                torch.save(state_dict,os.path.join(save_path,f'{model_name}_{argu.fold_num}_{e:06}.pt'))
 
             # TODO: add audio, figure by epoch to tensorboard
             if e % argu.summary_interval == 0:
@@ -175,7 +174,6 @@ def train(argu):
                 _,mel_vq = vector_quantizer(encoded_mel)
                 test_mel_outputs = mel_decoder(mel_vq)
                 test_mel_loss = loss_fn(test_mel_outputs,test_label).detach().cpu().numpy()
-                vector_quantizer.reset_num = 0
                 test_mel_mfcc = utils.toMFCC(utils.getFlatMel(test_mel_outputs.detach().cpu().numpy()))
                 mel_eu_dis = 0
                 for i in range(test_mfcc.shape[0]):
@@ -195,7 +193,8 @@ def train(argu):
                 if argu.save_logtxt:
                     log_data = [e, test_mel_loss, aver_mel_loss/len(train_dataloader), vector_quantizer.reset_num,mel_mcd]
                     csv_writer.writerow(log_data)  # 写入数据行
-
+                vector_quantizer.reset_num = 0
+                
         if argu.save_tensorboard:
             writer.close()
         if argu.save_logtxt:

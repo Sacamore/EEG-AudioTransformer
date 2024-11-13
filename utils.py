@@ -87,17 +87,19 @@ def parseCommand():
     parser.add_argument('--graph_interval',default=50,type=int)
     parser.add_argument('--pretrain_model',default='',type=str)
     parser.add_argument('--fold_num',default=0,type=int)
-    parser.add_argument('--save_tensorboard',default=True,type=bool)
-    parser.add_argument('--save_logtxt',default=False,type=bool)
+    parser.add_argument('--save_tensorboard',action="store_true")
+    parser.add_argument('--save_logtxt',action="store_true")
 
     argu = parser.parse_args()
-    print(f"Initializing Training Process: \n
-            config: {argu.config}\n
-            use_gpu_num: {argu.use_gpu_num}\n
-            seed: {argu.seed} \n
-            sub: {argu.sub} \n
-            fold: {argu.fold_num}\n
-            pretrain model: {'None' if argu.pretrain_model=='' else argu.pretrain_model}\n
+    print(f"Initializing Training Process: \n \
+            config: {argu.config}\n \
+            use_gpu_num: {argu.use_gpu_num}\n \
+            seed: {argu.seed} \n \
+            sub: {argu.sub} \n \
+            fold: {argu.fold_num}\n \
+            pretrain model: {'None' if argu.pretrain_model=='' else argu.pretrain_model}\n \
             save: {'tensorboard' if argu.save_tensorboard else ''} {'logtxt' if argu.save_logtxt else ''}\n")
-
+    # print(argu.save_tensorboard)
+    # print(argu.save_logtxt)
+    
     return argu
