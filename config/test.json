@@ -1,0 +1,28 @@
+{
+    "model_name":"melvqvae",
+    "model_type":"vqvae",
+    "model_config":{
+        "seg_size":0.1,
+        "hop_size":0.01,
+        "batch_size":128,
+        "epochs":201,
+        "lr":5e-4,
+        "b1":0.5,
+        "b2":0.999,
+        "d_model":256,
+        "nhead":4,
+        "n_layer":3,
+        "hidden_dim":256,
+        "dropout":0.5
+    },
+    "data_config":{
+        "data_path":"./feat",
+        "eeg_sr":1024,
+        "audio_sr":16000,
+        "n_mels":80,
+        "win_len":0.05,
+        "frame_shift":0.01,
+        "isAugment":false,
+        "pad_mode":"constant"
+    }
+}

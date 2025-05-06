@@ -1,0 +1,13 @@
+{
+    "model":"Transformer",
+    "seg_size":0.1,
+    "hop_size":0.01,
+    "batch_size":128,
+    "epochs":201,
+    "lr":5e-5,
+    "d_model":256,
+    "nhead":4,
+    "n_layer":3,
+    "hidden_dim":256,
+    "dropout":0.5
+}

@@ -1,11 +1,11 @@
 Average Test PCC values for each subject:
-sub-01 mean:0.631172 max:0.659414
-sub-02 mean:0.661815 max:0.680198
-sub-03 mean:0.838076 max:0.849987
-sub-04 mean:0.809031 max:0.822582
-sub-05 mean:0.626120 max:0.642836
-sub-06 mean:0.854478 max:0.865612
-sub-07 mean:0.787099 max:0.810954
-sub-08 mean:0.746497 max:0.762955
-sub-09 mean:0.725005 max:0.746951
-sub-10 mean:0.820085 max:0.828626
+sub-01 mean:0.631172
+sub-02 mean:0.661815
+sub-03 mean:0.838076
+sub-04 mean:0.809031
+sub-05 mean:0.626120
+sub-06 mean:0.854478
+sub-07 mean:0.787099
+sub-08 mean:0.746497
+sub-09 mean:0.725005
+sub-10 mean:0.820085

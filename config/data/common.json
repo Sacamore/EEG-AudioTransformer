@@ -1,0 +1,9 @@
+{
+    "data_path":"./feat",
+    "eeg_sr":1024,
+    "audio_sr":16000,
+    "n_mels":80,
+    "win_len":0.05,
+    "frame_shift":0.01,
+    "pad_mode":"constant"
+}

@@ -1,0 +1,13 @@
+{
+    "model":"TransformerEncoder",
+    "seg_size":0.25,
+    "hop_size":0.05,
+    "batch_size":128,
+    "epochs":401,
+    "lr":5e-5,
+    "d_model":64,
+    "nhead":2,
+    "n_layer":3,
+    "hidden_dim":128,
+    "dropout":0.5
+}

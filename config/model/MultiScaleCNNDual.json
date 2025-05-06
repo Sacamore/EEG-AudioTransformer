@@ -1,0 +1,11 @@
+{
+    "model":"MultiScaleCNNDual",
+    "seg_size":0.1,
+    "hop_size":0.01,
+    "batch_size":128,
+    "epochs":401,
+    "latent_dim":64,
+    "dropout":0.1,
+    "lr_g":1e-3,
+    "lr_d":1e-4
+}
